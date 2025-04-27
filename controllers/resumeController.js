@@ -116,5 +116,20 @@ export const updateResume = async (req, res) => {
   }
 };
 
+export const getResumeById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const resume = await Resume.findById(id);
+
+    if (!resume) {
+      return res.status(404).json({ message: 'Resume not found' });
+    }
+
+    res.json(resume);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error while fetching resume.' });
+  }
+};
 
 
