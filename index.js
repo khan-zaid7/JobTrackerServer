@@ -6,6 +6,8 @@ import cors from 'cors';
 import authRoutes from './routes/auth.js';
 import jobRoutes from './routes/jobs.js';
 import resumeRoutes from './routes/resume.js';
+import matchRoutes from './routes/match.js';
+
 dotenv.config();
 
 const app = express();
@@ -35,6 +37,8 @@ mongoose.connect(process.env.MONGO_URI)
 app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/resumes', resumeRoutes);
+app.use('/api/match', matchRoutes);
+
 
 
 app.listen(5000, () => console.log('Server running on port 5000'));
