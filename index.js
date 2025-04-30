@@ -10,6 +10,8 @@ import matchRoutes from './routes/match.js';
 
 import path from 'path';
 import { fileURLToPath } from 'url';
+import matchResultsRoutes from './routes/matchResults.js';
+
 dotenv.config();
 
 const app = express();
@@ -40,6 +42,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/resumes', resumeRoutes);
 app.use('/api/match', matchRoutes);
+app.use('/api/match-results', matchResultsRoutes);
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use('/tailored-resumes', express.static(path.join(__dirname, '/tailored-resumes')));
