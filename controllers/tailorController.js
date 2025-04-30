@@ -1,3 +1,4 @@
+// server/controllers/matchController.js
 import axios from 'axios';
 import dotenv from 'dotenv';
 import MatchResult from '../models/MatchResult.js';
@@ -30,24 +31,21 @@ IMPORTANT:
 - Your output MUST retain or improve the resume’s match score.
 - You MUST emphasize the matched skills clearly.
 - Never remove strong keywords or achievements already present.
-- If the original resume matches well, you are only allowed to improve clarity and formatting.
-- Your rewrite must include all technical keywords that are relevant to the job.
+- You MAY naturally incorporate missing skills (as tools used, coursework, exposure, etc.),
+  BUT you MUST NOT fabricate any experience, companies, or projects.
+- You MUST NOT falsely claim more years of experience than the original resume.
 
 RULES:
 - 1 to 1.5 pages total
 - Summary max 4 lines
 - Bullet points only (•), no paragraphs longer than 2 lines
 - Use action verbs and metrics
-- Subtly include missing skills only if they match context
-- No fake experience, no fluff
 - Resume must be readable and ATS-optimized
 
 OUTPUT:
-Return the final tailored resume as raw plain text only. No markdown or JSON wrapping.
-`;
+Return the final tailored resume as raw plain text only. No markdown or JSON wrapping.`;
 
-    const userPrompt = `
-Job Description:
+    const userPrompt = `Job Description:
 ${jobDescription}
 
 Original Resume:
@@ -60,8 +58,7 @@ Missing Skills:
 ${missingSkills.join(', ')}
 
 Match Summary:
-${matchSummary}
-    `;
+${matchSummary}`;
 
     const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
       model: 'deepseek-chat',
@@ -78,7 +75,14 @@ ${matchSummary}
       }
     });
 
-    const tailoredResume = response.data.choices[0].message.content;
+    let tailoredResume = response.data.choices[0].message.content;
+
+    // Strip markdown-style formatting
+    tailoredResume = tailoredResume
+      .replace(/\*\*(.*?)\*\*/g, '$1') // bold
+      .replace(/\* /g, '\u2022 ') // markdown bullet to real bullet
+      .replace(/\u2022{2,}/g, '\u2022') // collapse bullets if malformed
+      .trim();
 
     matchResult.tailoredResume = tailoredResume;
     await matchResult.save();
