@@ -2,6 +2,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
 import cleanResumeText from '../utils/cleanText.js';
+import MatchResult from '../models/MatchResult.js';
 
 dotenv.config();
 
@@ -12,7 +13,7 @@ function cleanDeepseekResponse(text) {
 
 export const matchResume = async (req, res) => {
   try {
-    const { jobDescription, resumeText } = req.body;
+    const { jobDescription, resumeText, jobId, resumeId } = req.body;
 
     if (!jobDescription || !resumeText) {
       return res.status(400).json({ message: 'Job description and resume text are required.' });
@@ -63,7 +64,21 @@ JSON Format: { "score": number, "matchedSkills": [], "missingSkills": [], "summa
     const parsedResult = JSON.parse(deepSeekData);
 
     console.log('Parsed Match Result:', parsedResult);
-    return res.json(parsedResult);
+    const matchRecord = await MatchResult.findOneAndUpdate(
+      { jobId, resumeId }, // Find existing match
+      {
+        jobId,
+        resumeId,
+        score: parsedResult.score,
+        matchedSkills: parsedResult.matchedSkills,
+        missingSkills: parsedResult.missingSkills,
+        summary: parsedResult.summary,
+      },
+      { new: true, upsert: true } // Create if not exists, return updated doc
+    );
+    
+
+    return res.json(matchRecord);
 
   } catch (error) {
     console.error('Error matching resume:', error?.response?.data || error.message || error);
