@@ -11,6 +11,7 @@ import matchRoutes from './routes/match.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import matchResultsRoutes from './routes/matchResults.js';
+import scrapeRoutes from './routes/scrapeRoutes.js';
 
 dotenv.config();
 
@@ -43,6 +44,8 @@ app.use('/api/jobs', jobRoutes);
 app.use('/api/resumes', resumeRoutes);
 app.use('/api/match', matchRoutes);
 app.use('/api/match-results', matchResultsRoutes);
+app.use('/api/scrape', scrapeRoutes);
+
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
