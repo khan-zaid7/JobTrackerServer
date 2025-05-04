@@ -8,7 +8,11 @@ const scrapedJobSchema = new mongoose.Schema({
   description: { type: String, default: '' },
   isRelevant: { type: Boolean, default: false },
   scrapedAt: { type: Date, default: Date.now },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' } // Link to user who scraped
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  batchId: {
+    type: String,
+    index: true, 
+  },  
 });
 
 const ScrapedJob = mongoose.model('ScrapedJob', scrapedJobSchema);

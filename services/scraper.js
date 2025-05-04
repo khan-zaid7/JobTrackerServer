@@ -2,17 +2,21 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import ScrapedJob from '../models/ScrapedJob.js';
 import dotenv from 'dotenv';
+import ScrapeSession from '../models/ScrapeSession.js';
+import { v4 as uuidv4 } from 'uuid'; // for batchId
+
 
 dotenv.config();
 
 puppeteer.use(StealthPlugin());
 
-const delay = (ms) => new Promise(resolve => 
+const delay = (ms) => new Promise(resolve =>
   setTimeout(resolve, ms + Math.random() * 2000)
 );
 
 
-export const scrapeLinkedInJobs = async (userId) => {
+export const scrapeLinkedInJobs = async (userId, limit = null) => {
+  const batchId = uuidv4();
   const browser = await puppeteer.connect({
     browserWSEndpoint: `wss://${process.env.BROWSER_API_USERNAME}:${process.env.BROWSER_API_PASSWORD}@${process.env.BROWSER_API_HOST}:${process.env.BROWSER_API_PORT}`
   });
@@ -42,7 +46,8 @@ export const scrapeLinkedInJobs = async (userId) => {
     }
 
     // Job extraction with additional fields
-    const jobs = await page.evaluate(() => {
+    // Job extraction with limit
+    let jobs = await page.evaluate(() => {
       return Array.from(document.querySelectorAll('.jobs-search__results-list li')).map(job => ({
         title: job.querySelector('.base-search-card__title')?.textContent?.trim() || '',
         company: job.querySelector('.base-search-card__subtitle')?.textContent?.trim() || '',
@@ -51,6 +56,11 @@ export const scrapeLinkedInJobs = async (userId) => {
         location: job.querySelector('.job-search-card__location')?.textContent?.trim() || ''
       })).filter(job => job.url);
     });
+
+    if (limit && jobs.length > limit) {
+      jobs = jobs.slice(0, limit);
+    }
+
 
     // Advanced deduplication
     const savedJobs = [];
@@ -62,7 +72,7 @@ export const scrapeLinkedInJobs = async (userId) => {
         const existing = await ScrapedJob.findOne({
           $or: [
             { url: job.url }, // Exact match
-            { 
+            {
               title: { $regex: job.title.substring(0, 20), $options: 'i' },
               company: job.company,
               lastScraped: { $gt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
@@ -77,7 +87,8 @@ export const scrapeLinkedInJobs = async (userId) => {
               ...job,
               userId,
               lastScraped: new Date(),
-              isRelevant: true // Mark new jobs as relevant by default
+              isRelevant: true,
+              batchId,
             },
             { upsert: true, new: true }
           );
@@ -90,11 +101,17 @@ export const scrapeLinkedInJobs = async (userId) => {
         console.error(`Error processing job ${job.url}:`, error.message);
       }
     }
-
+    await ScrapeSession.create({
+      userId,
+      batchId,
+      jobCount: savedJobs.length
+    });
+    
     return {
       success: true,
       newJobs: savedJobs.length,
-      totalProcessed: jobs.length
+      totalProcessed: jobs.length,
+      batchId,
     };
 
   } catch (error) {
