@@ -1,13 +1,14 @@
 import express from 'express';
 import {
-  scrapeLatestJobFromLinkedIn
+  startScrapeSession,
+  getScrapeStatus,
+  getScrapeResults
 } from '../controllers/scrapeController.js';
-import authMiddleware from '../middleware/auth.js';
 
 const router = express.Router();
 
-// router.use(authMiddleware); // protect all routes
-
-router.route('/linkedin').post(scrapeLatestJobFromLinkedIn);
+router.post('/start', startScrapeSession);
+router.get('/status/:sessionId', getScrapeStatus);
+router.get('/results/:sessionId', getScrapeResults);
 
 export default router;

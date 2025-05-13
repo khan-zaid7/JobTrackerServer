@@ -1,11 +1,50 @@
-import scrapeWebsite from '../services/LinkedInScraper.js';
+import ScrapeSession from '../models/ScrapeSession.js';
+import ScrapedJob from '../models/ScrapedJob.js';
+import Resume from '../models/Resume.js';
+import { asyncScrapeAndFilter } from '../services/asyncScrapeAndFilter.js';
 
+export const startScrapeSession = async (req, res) => {
+  const { url, resumeId, tags } = req.body;
 
-export const scrapeLatestJobFromLinkedIn = async (req, res) => {
+  if (!resumeId || !tags?.length) return res.status(400).json({ message: 'Missing resumeId or tags' });
 
-    const linkedInSearchUrl = 'https://www.linkedin.com/jobs/search/?keywords=Software%20Developer&location=Canada&geoId=101174742&f_E=1%2C2%2C3&f_TPR=r86400&f_JT=F%2CC&position=1&pageNum=0';
+  const newSession = await ScrapeSession.create({
+    userId: '680860a5c86b10aabe3bd656',
+    batchId: '', 
+    resumeId,
+    tags,
+    status: 'pending',
+    note: 'Starting scrape...'
+  });
 
-    const scrapedJobs = await  scrapeWebsite(linkedInSearchUrl);
+  asyncScrapeAndFilter(newSession._id, url); // Fire async task
 
-    return res.json(scrapedJobs);
-}
+  res.status(202).json({ sessionId: newSession._id });
+};
+
+export const getScrapeStatus = async (req, res) => {
+  const { sessionId } = req.params;
+
+  const session = await ScrapeSession.findById(sessionId);
+  if (!session) return res.status(404).json({ message: 'Session not found' });
+
+  res.json({
+    status: session.status,
+    batchId: session.batchId,
+    jobCount: session.jobCount,
+    note: session.note,
+    error: session.error
+  });
+};
+
+export const getScrapeResults = async (req, res) => {
+  const { sessionId } = req.params;
+
+  const session = await ScrapeSession.findById(sessionId);
+  if (!session || session.status !== 'done') {
+    return res.status(400).json({ message: 'Results not ready or session not found' });
+  }
+
+  const jobs = await ScrapedJob.find({ batchId: session.batchId, isRelevant: true }).lean();
+  res.json(jobs);
+};

@@ -3,9 +3,7 @@ import { sub, format } from 'date-fns';
 import ScrapedJob from '../models/ScrapedJob.js';
 import { v4 as uuidv4 } from 'uuid';
 import ScrapeSession from '../models/ScrapeSession.js';
-
-// TODO: Remove this add a dynamic ID 
-const RANDOMUSERID = '680860a5c86b10aabe3bd656';
+import { RANDOMUSERID } from '../config/constants.js';
 
 function parseLinkedInDate(relativeTime) {
     const now = new Date();
@@ -110,7 +108,7 @@ async function getJobDescription(page) {
     }
 }
 
-async function getJobDetails(page, batchID) {
+export async function getJobDetails(page, batchId) {
     const title = await page.locator('.top-card-layout__title').innerText();
     const url = await page.locator('.topcard__link').getAttribute('href');
     const companyName = await page.locator('.topcard__org-name-link').innerText();
@@ -121,6 +119,14 @@ async function getJobDetails(page, batchID) {
     const relativeTime = await page.locator('.posted-time-ago__text').innerText();
     const postedTime = format(parseLinkedInDate(relativeTime), 'yyyy-MM-dd');
     const description = await getJobDescription(page);
+    const isRelevant = false;
+
+    // ✅ Prevent duplicate save by URL
+    const existing = await ScrapedJob.findOne({ url });
+    if (existing) {
+        console.log(`[Duplicate Skipped] ${title} @ ${companyName}`);
+        return null;
+    }
 
     const jobDoc = new ScrapedJob({
         title,
@@ -131,14 +137,23 @@ async function getJobDetails(page, batchID) {
         postedTime,
         description,
         createdBy: RANDOMUSERID,
-        batchId: batchID
+        batchId,
+        isRelevant,
     });
 
-    await jobDoc.save();
-    return jobDoc;
+    try {
+        await jobDoc.save();
+        return jobDoc;
+    } catch (e) {
+        if (e.code === 11000) {
+            console.log(`[Mongo Duplicate] ${url} already exists.`);
+            return null;
+        }
+        throw e;
+    }
 }
 
-async function scrapeWebsite(url = linkedInSearchUrl) {
+async function scrapeWebsite(url = linkedInSearchUrl, sessionId) {
     let allJobs = [];
 
     const browser = await firefox.launch({
@@ -169,16 +184,17 @@ async function scrapeWebsite(url = linkedInSearchUrl) {
     const count = await jobRows.count();
     console.log(`Found ${count} jobs to process`);
 
-    // creating a batch 
+    // Create batch
     const batchId = uuidv4();
-    
-    await ScrapeSession.create({
-        userId: RANDOMUSERID,
+    // 👇 Update existing session — DO NOT create new one
+    await ScrapeSession.findByIdAndUpdate(sessionId, {
         batchId,
-        note: 'Scraped from LinkedIn 4-hour job run'
+        jobCount: count,
+        status: 'scraping',
+        note: 'Scraping started'
     });
 
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < count; i++) {
         const row = jobRows.nth(i);
         const link = row.locator('a.base-card__full-link');
 
@@ -207,7 +223,7 @@ async function scrapeWebsite(url = linkedInSearchUrl) {
     }
 
     await browser.close();
-    return allJobs;
+    return {allJobs, batchId};
 }
 
 const linkedInSearchUrl = 'https://www.linkedin.com/jobs/search/?keywords=Software%20Developer&location=Canada&geoId=101174742&f_E=1%2C2%2C3&f_TPR=r86400&f_JT=F%2CC&position=1&pageNum=0';
