@@ -11,6 +11,7 @@ const ScrapedJobSchema = new mongoose.Schema({
     createdBy: { type: mongoose.Schema.Types.ObjectId, required: true },
     batchId: { type: String, required: true },
     isRelevant: { type: Boolean, default: false },
+    is_deleted: { type: Boolean, default: false } // ✅ add this
 }, {
     timestamps: true
 });

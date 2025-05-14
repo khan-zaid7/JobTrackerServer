@@ -4,7 +4,7 @@ import ScrapedJob from '../models/ScrapedJob.js';
 import ScrapeSession from '../models/ScrapeSession.js';
 import { callDeepSeekAPI } from '../utils/deepseek.js';
 
-const CHUNK_SIZE = 20;
+const CHUNK_SIZE = 10;
 
 function chunkArray(array, size) {
   const result = [];
@@ -30,7 +30,7 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
     const { allJobs, batchId } = await scrapeWebsite(url ? url : undefined, sessionId);
     const scrapedJobs = await ScrapedJob.find(
       { batchId, isRelevant: false, is_deleted: false },
-      { _id: 1, title: 1 }
+      { _id: 1, title: 1, description: 1 } // Added description here
     ).lean();
 
     await ScrapeSession.findByIdAndUpdate(sessionId, {
@@ -39,19 +39,42 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
       note: 'Filtering in progress...'
     });
 
-    const allFormatted = scrapedJobs.map(j => ({ id: j._id.toString(), title: j.title }));
+    const allFormatted = scrapedJobs.map(j => ({
+      id: j._id.toString(),
+      title: j.title,
+      description: j.description || '' // Ensure description exists
+    }));
+
     const jobChunks = chunkArray(allFormatted, CHUNK_SIZE);
+    console.log(`Processing ${jobChunks.length} chunks with ${CHUNK_SIZE} jobs each`);
 
     let allFiltered = [];
 
-    for (const chunk of jobChunks) {
-      let response = await callDeepSeekAPI(
-        buildSystemPrompt(),
-        buildUserPrompt({ scrapedJobsArr: chunk, keywordsArr, resumeText })
-      );
+    for (const [index, chunk] of jobChunks.entries()) {
+      console.log(`Processing chunk ${index + 1}/${jobChunks.length}`);
+      try {
+        let response = await callDeepSeekAPI(
+          buildSystemPrompt(),
+          buildUserPrompt({ scrapedJobsArr: chunk, keywordsArr, resumeText })
+        );
 
-      if (typeof response === 'string') response = JSON.parse(response);
-      if (Array.isArray(response)) allFiltered.push(...response);
+        // Safely parse response
+        if (typeof response === 'string') {
+          try {
+            response = JSON.parse(response);
+          } catch (parseError) {
+            console.error('Failed to parse API response:', response);
+            continue;
+          }
+        }
+
+        if (Array.isArray(response)) {
+          allFiltered.push(...response);
+        }
+      } catch (chunkError) {
+        console.error(`Error processing chunk ${index + 1}:`, chunkError.message);
+        continue;
+      }
     }
 
     await processScrapedJobs(allFormatted, allFiltered);
@@ -59,7 +82,8 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
     await ScrapeSession.findByIdAndUpdate(sessionId, {
       status: 'done',
       jobCount: allFormatted.length,
-      note: 'Done filtering.'
+      filteredCount: allFiltered.length,
+      note: `Filtering complete. Found ${allFiltered.length} relevant jobs.`
     });
   } catch (error) {
     await ScrapeSession.findByIdAndUpdate(sessionId, {
@@ -67,77 +91,110 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
       error: error.message
     });
     console.error('❌ asyncScrapeAndFilter failed:', error);
+    throw error; // Re-throw for error handling upstream
   }
 };
 
 export const processScrapedJobs = async (allJobs, filteredJobs) => {
-    try {
-        const filteredJobIds = new Set(filteredJobs.map(job => job.id));
-        const allJobIds = allJobs.map(job => job.id);
+  try {
+    const filteredJobIds = new Set(filteredJobs.map(job => job.id));
+    const bulkOps = [];
 
-        // 1. Mark filtered (relevant) jobs with isRelevant: true
-        await ScrapedJob.updateMany(
-            { _id: { $in: Array.from(filteredJobIds) } },
-            { $set: { isRelevant: true } }
-        );
+    // Prepare bulk operations for better performance
+    allJobs.forEach(job => {
+      const isRelevant = filteredJobIds.has(job.id);
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: job.id },
+          update: {
+            $set: {
+              isRelevant,
+              is_deleted: !isRelevant,
+              lastFilteredAt: new Date()
+            }
+          }
+        }
+      });
+    });
 
-        // 2. Mark the rest as is_deleted: true and isRelevant: false
-        const nonRelevantJobIds = allJobIds.filter(id => !filteredJobIds.has(id));
-
-        await ScrapedJob.updateMany(
-            { _id: { $in: nonRelevantJobIds } },
-            { $set: { is_deleted: true, isRelevant: false } }
-        );
-
-        console.log(`✅ Updated ${filteredJobIds.size} relevant jobs and ${nonRelevantJobIds.length} non-relevant jobs`);
-    } catch (error) {
-        console.error('❌ Error in processScrapedJobs:', error.message);
-        throw error;
+    if (bulkOps.length > 0) {
+      const result = await ScrapedJob.bulkWrite(bulkOps);
+      console.log(`✅ Updated ${result.modifiedCount} jobs (${filteredJobIds.size} relevant)`);
+    } else {
+      console.log('⚠️ No jobs to update');
     }
+  } catch (error) {
+    console.error('❌ Error in processScrapedJobs:', error.message);
+    throw error;
+  }
 };
 
 
 const buildSystemPrompt = () => {
-    return `
-You are a job-matching assistant.
+  return `
+You are an expert job-matching assistant.
 
 You will receive:
-1. scrapedJobsArr — an array of job objects, each with { id, title }.
-2. keywordsArr — a list of skills or technologies the user has or is targeting.
-3. resumeText — the user's resume content in plain text.
+- scrapedJobsArr: array of job objects, each with { id, title, description }
+- keywordsArr: list of technologies or roles the user has or is targeting
+- resumeText: full resume in plain text
 
 Your task:
-- Filter ONLY the provided job objects from scrapedJobsArr.
-- DO NOT create or invent any job titles or job objects.
-- Only return jobs that are listed in scrapedJobsArr and are relevant based on resumeText OR keywordsArr.
+Return ONLY the jobs from scrapedJobsArr that are genuinely relevant to the resumeText or keywordsArr.
 
-A job is considered relevant if:
-- The job title matches a skill, role, or topic from the keywordsArr.
-- OR the job title aligns with the user's education or experience in resumeText.
+A job is relevant ONLY if ALL of these conditions are met:
+1. Technical Match:
+   - The job description includes tools/technologies present in resumeText or keywordsArr
+   - OR the job title conceptually matches the user's experience (see equivalencies below)
+
+2. Experience Level:
+   - If job requires "Senior", "Lead", "5+ years" or "10+ years", reject unless resume shows equivalent experience
+   - For entry/mid-level roles, accept if resume shows some relevant experience
+
+3. Language Requirement:
+   - Reject if job explicitly requires languages other than English (e.g., "French", "Bilingual")
+
+4. Conceptual Role Equivalencies (case insensitive):
+   • DevOps ≈ SRE ≈ Platform Engineer ≈ Cloud Engineer
+   • Frontend ≈ UI Engineer ≈ Web Developer ≈ JavaScript Developer
+   • Backend ≈ API Developer ≈ Server Engineer
+   • Full Stack ≈ Web Developer ≈ Software Engineer
+   • Security Engineer ≈ Cloud Security ≈ Application Security
+
+5. Technical Keywords Matching:
+   - Must have at least 3 matching keywords from:
+     • resumeText technologies
+     • keywordsArr
+     • equivalent technologies (e.g., AWS ≈ GCP ≈ Azure, React ≈ Vue ≈ Angular)
 
 Strict Rules:
-- DO NOT hallucinate or invent job titles not in scrapedJobsArr.
-- DO NOT explain anything.
-- DO NOT include any markdown formatting (no triple backticks, no "json" tag).
-- DO NOT include any extra text before or after the array.
-- DO NOT return an empty array unless there are truly zero matches.
-- DO NOT include comments or notes.
+- Never modify job titles or invent jobs
+- No explanations - only return matching jobs in exact specified format
+- Return empty array [] if no matches
+- Only return "id" and "title" fields
 
-Output Format:
-Return only a raw JSON array directly, like this:
+Output format example:
 [
   { "id": "abc123", "title": "React Developer" },
-  { "id": "xyz456", "title": "Node.js Engineer" }
+  { "id": "xyz456", "title": "Site Reliability Engineer" }
 ]
 `.trim();
 };
 
-
 const buildUserPrompt = ({ scrapedJobsArr, keywordsArr, resumeText }) => {
-    return `ScrapedJobs Array:
-${JSON.stringify(scrapedJobsArr, null, 2)}
+  // Validate input
+  if (!Array.isArray(scrapedJobsArr)) throw new Error('scrapedJobsArr must be an array');
+  if (!Array.isArray(keywordsArr)) throw new Error('keywordsArr must be an array');
+  if (typeof resumeText !== 'string') throw new Error('resumeText must be a string');
 
-keywords Array:
+  return `ScrapedJobs Array:
+${JSON.stringify(scrapedJobsArr.map(job => ({
+  id: job.id,
+  title: job.title || '',
+  description: job.description || ''
+})), null, 2)}
+
+Keywords Array:
 ${keywordsArr.join(', ')}
 
 Resume Text:
