@@ -45,6 +45,6 @@ export const getScrapeResults = async (req, res) => {
     return res.status(400).json({ message: 'Results not ready or session not found' });
   }
 
-  const jobs = await ScrapedJob.find({ batchId: session.batchId, isRelevant: true }).lean();
+  const jobs = await ScrapedJob.find({ batchId: session.batchId}).lean();
   res.json(jobs);
 };

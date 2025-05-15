@@ -3,8 +3,6 @@ import axios from 'axios';
 dotenv.config();
 
 export const callDeepSeekAPI = async (systemPrompt, userPrompt) => {
-  console.log("System Prompt:", systemPrompt);
-  console.log("User Prompt:", userPrompt);
   
   try {
     const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
@@ -13,8 +11,9 @@ export const callDeepSeekAPI = async (systemPrompt, userPrompt) => {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      temperature: 0.2,
-      max_tokens: 1800
+      temperature: 0,
+      max_tokens: 1800,
+      top_p: 1,
     }, {
       headers: {
         'Authorization': `Bearer ${process.env.DEEPSEEK_APIKEY}`,
