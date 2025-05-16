@@ -7,6 +7,7 @@ import { generateResumeHTML } from '../utils/resumeTemplate.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { callDeepSeekAPI } from '../utils/deepseek.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -70,25 +71,6 @@ Match Summary:
 ${matchSummary}`;
 };
 
-// Helper to make API request
-const callDeepSeekAPI = async (systemPrompt, userPrompt) => {
-  const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-    model: 'deepseek-chat',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    temperature: 0.2,
-    max_tokens: 1800
-  }, {
-    headers: {
-      'Authorization': `Bearer ${process.env.DEEPSEEK_APIKEY}`,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  return response.data.choices[0].message.content;
-};
 
 // Helper to sanitize the AI response
 const sanitizeResumeOutput = (content) => {
