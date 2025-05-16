@@ -14,7 +14,6 @@ function chunkArray(array, size) {
   }
   return result;
 }
-
 export const asyncScrapeAndFilter = async (sessionId, url) => {
   try {
     const session = await ScrapeSession.findById(sessionId);
@@ -27,7 +26,6 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
     const resumeText = resume.textContent;
     const keywordsArr = tags.map(t => t.trim());
 
-    // 🔥 Start scraping
     const { allJobs, batchId } = await scrapeWebsite(url || undefined, sessionId);
 
     const scrapedJobs = await ScrapedJob.find(
@@ -48,7 +46,7 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
     }));
 
     const jobChunks = chunkArray(allFormatted, CHUNK_SIZE);
-    let allFiltered = [];
+    let matched = [], borderline = [], rejected = [];
 
     for (const [index, chunk] of jobChunks.entries()) {
       try {
@@ -62,33 +60,39 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
 
         if (typeof response === 'string') {
           try {
-            const jsonStart = response.indexOf('[');
-            const jsonEnd = response.lastIndexOf(']') + 1;
-            const rawJson = response.slice(jsonStart, jsonEnd);
-            response = JSON.parse(rawJson);
+            // Remove ```json and ``` from response
+            const cleaned = response
+              .replace(/^```json\s*/i, '')  // remove ```json at start
+              .replace(/^```/, '')          // just in case there's ``` without json
+              .replace(/```$/, '')          // remove trailing ```
+              .trim();
+
+            response = JSON.parse(cleaned);
           } catch (parseError) {
             console.error('❌ Failed to parse DeepSeek API response:', response);
             continue;
           }
         }
 
-        if (Array.isArray(response)) {
-          allFiltered.push(...response);
-        }
+
+        if (response?.matched) matched.push(...response.matched);
+        if (response?.borderline) borderline.push(...response.borderline);
+        if (response?.rejected) rejected.push(...response.rejected);
+
       } catch (chunkError) {
         console.error(`❌ Error processing chunk ${index + 1}:`, chunkError.message);
         continue;
       }
     }
 
-    const updatedScrapedJobs = await processScrapedJobs(allFiltered);
-    console.log(updatedScrapedJobs);
+    const result = await processScrapedJobs({ matched, borderline, rejected });
+    console.log(result);
 
     await ScrapeSession.findByIdAndUpdate(sessionId, {
       status: 'done',
       jobCount: allFormatted.length,
-      filteredCount: allFiltered.length,
-      note: `Filtering complete. Found ${allFiltered.length} relevant jobs.`
+      filteredCount: matched.length,
+      note: `Filtering complete. Found ${matched.length} relevant jobs.`
     });
   } catch (error) {
     await ScrapeSession.findByIdAndUpdate(sessionId, {
@@ -100,124 +104,102 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
   }
 };
 
+export const processScrapedJobs = async ({ matched = [], borderline = [], rejected = [] }) => {
+  const updates = await Promise.allSettled([
+    ...matched.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
+      isRelevant: true,
+      is_deleted: false,
+      rejectionReason: null
+    }, { new: true })),
 
-/**
- * Process DeepSeek-filtered jobs and update ScrapedJob documents.
- * @param {Array} deepSeekResultArr - Array of jobs from DeepSeek filtering
- * @returns {Object} Summary of updated jobs
- */
-export const processScrapedJobs = async (deepSeekResultArr = []) => {
-  if (!Array.isArray(deepSeekResultArr) || deepSeekResultArr.length === 0) {
-    throw new Error('Invalid or empty input to processScrapedJobs.');
-  }
+    ...borderline.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
+      isRelevant: false,
+      is_deleted: false,
+      rejectionReason: job.reason || 'Borderline match: minor mismatch'
+    }, { new: true })),
 
-  const updates = await Promise.allSettled(
-    deepSeekResultArr.map(async (job) => {
-      const { id, rejectionReason } = job;
+    ...rejected.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
+      isRelevant: false,
+      is_deleted: true,
+      rejectionReason: job.rejectionReason || 'Not relevant'
+    }, { new: true }))
+  ]);
 
-      if (!id) return { status: 'rejected', reason: 'Missing job ID' };
-
-      const updateFields = rejectionReason
-        ? {
-            isRelevant: false,
-            is_deleted: true,
-            rejectionReason,
-          }
-        : {
-            isRelevant: true,
-            is_deleted: false,
-            rejectionReason: null,
-          };
-
-      return await ScrapedJob.findByIdAndUpdate(id, updateFields, {
-        new: true,
-      });
-    })
-  );
-
-  const resultSummary = {
-    totalProcessed: deepSeekResultArr.length,
-    updatedSuccessfully: updates.filter(r => r.status === 'fulfilled').length,
-    failedUpdates: updates.filter(r => r.status === 'rejected').map(r => r.reason),
+  return {
+    totalProcessed: matched.length + borderline.length + rejected.length,
+    updatedSuccessfully: updates.filter(u => u.status === 'fulfilled').length,
+    failedUpdates: updates.filter(u => u.status === 'rejected').map(e => e.reason)
   };
-
-  return resultSummary;
 };
+
 
 const buildSystemPrompt = () => {
   return `
-You are an AI job-matching engine. Your job is to evaluate a list of scraped jobs and decide whether they are relevant to the user based on their resume and skills.
+You are an AI job-matching engine that classifies scraped jobs into three categories based on a user's resume and target skills.
 
 You will receive:
-- scrapedJobsArr: Array of jobs — each with { id, title, description }
+- scrapedJobsArr: Array of job objects, each with { id, title, description }
 - keywordsArr: List of technologies or roles the user is targeting
 - resumeText: The user’s resume in plain text
 
-Your task:
-Return every job from scrapedJobsArr. For each job:
-- If relevant: include { id, title }
-- If not relevant: include { id, title, rejectionReason }
+🎯 Your Task:
+Evaluate each job in scrapedJobsArr and classify it as one of:
+1. "matched" – Strongly relevant
+2. "borderline" – Somewhat relevant, worth showing
+3. "rejected" – Not a match
 
-🏁 Matching Rules (be flexible but smart):
+🧠 Matching Rules:
 
-1. ✅ **Skill Match (at least 2+ relevant matches required — not 3)**:
-   A job is relevant if it includes at least **2 technologies/tools** from:
-   - resumeText
-   - keywordsArr
-   - similar equivalents (e.g., AWS ≈ Azure ≈ GCP, React ≈ Vue ≈ Angular, PostgreSQL ≈ MySQL)
+✅ **Matched Jobs** (high-confidence):
+- At least **2 or more matching skills/technologies/tools**
+- Matches title (or reasonable equivalent)
+- Passes experience requirement (or comes close for junior roles)
 
-   ➤ Prefer strong overlap, but allow for synonyms, related stacks, or reasonable substitutions.
+⚠️ **Borderline Jobs** (partial match):
+- Only **1 strong skill match**
+- OR missing **only 1 key requirement**
+- OR good title/tech match, but resume is slightly lacking
+- These jobs should include a "reason" field that explains the borderline status
 
-2. ✅ **Experience Level (match titles, not years only)**:
-   - For roles with "Senior", "Lead", "Principal", or "5+ years":
-     ➤ Accept if resume shows 2+ years **and** senior-sounding roles, independent project ownership, or full lifecycle work.
-   - Do **not** reject solely due to lack of exact year count.
+❌ **Rejected Jobs** (clear mismatch):
+- No strong tech/tool overlap
+- OR requires very specific tools or domains (e.g., PyTorch, Guidewire, ServiceNow) that are not present
+- Must include a "rejectionReason" — clear and specific (not vague)
 
-3. ✅ **Title Relevance by Conceptual Match**:
-   Accept a job if the role title aligns conceptually with resume experience.
-   Examples:
-   - Full Stack ≈ Software Engineer ≈ Web Developer
-   - Backend ≈ API Developer ≈ Django/Node Engineer
-   - DevOps ≈ Cloud Engineer ≈ Infrastructure Automation
+💡 Conceptual Title Equivalents (apply flexibly):
+- Full Stack ≈ Software Engineer ≈ Web Developer
+- DevOps ≈ SRE ≈ Cloud Engineer
+- Backend ≈ API Developer ≈ Server Engineer
+- Frontend ≈ JavaScript Developer ≈ UI Engineer
+- Security ≈ Application Security ≈ Cloud Security
 
-4. ✅ **Don’t reject if the user has *partial exposure***:
-   If the user shows partial experience (e.g., AWS EC2 + Docker but not Kubernetes), mark it as relevant unless the JD is extremely strict.
+🚫 Reject jobs requiring:
+- "French", "Bilingual", or other non-English languages (unless resume mentions it)
+- Niche domain tools (e.g., SAS AML, Guidewire, CNC tools) not found in resume/keywordsArr
 
-5. 🚫 **Reject only for clear blockers**:
-   Only reject if the job **clearly and explicitly** demands something not in the resume:
-   - Language requirements ("French required")
-   - Niche platforms/tools (e.g., Guidewire, SAS AML, CNC CAD systems) that are not remotely mentioned
-   - Hardcore ML roles with PyTorch, TensorFlow, if none of it is in resume
+📤 Output Format:
+Return a JSON object:
+{
+  matched: [ { id, title } ],
+  borderline: [ { id, title, reason } ],
+  rejected: [ { id, title, rejectionReason } ]
+}
 
-📝 Output Format:
-Return an array of:
-- { id, title }                            → if relevant
-- { id, title, rejectionReason }          → if not relevant
-
-📌 rejectionReason must be a short, **precise one-liner** naming **missing tool or reason**.
-
-❌ Don’t use vague phrases like “not a match”  
-✅ Say things like:
-- "Missing Kubernetes or container orchestration experience"
-- "Requires PyTorch or ML frameworks not found in resume"
-- "Job requires Guidewire suite, not present in resume"
+📌 Reason Guidelines:
+- Must be **specific and one-line**
+- Examples:
+  - "Missing Kubernetes but has Docker and CI/CD"
+  - "Requires SAS AML domain tools not found in resume"
+  - "Has React and Node but lacks GraphQL"
 
 Strict Instructions:
-- Never fabricate jobs
-- Don't change job titles
-- Never invent reasons — explain clearly based on resume or keywordsArr
-- Output ONLY the required JSON structure — no additional commentary
+- DO NOT fabricate or modify job data
+- NO explanation or commentary outside the JSON
+- BE DETERMINISTIC: same input → same output
+- Return plain JSON only. Do NOT wrap in markdown like '\`\`\`json or \`\`\`.'
 
-⚠️ Be slightly **lenient and optimistic** — prioritize **possible success** over excessive filtering. Assume the user can learn and adapt quickly.
-
-Example:
-[
-  { "id": "abc123", "title": "Software Developer" },
-  { "id": "xyz456", "title": "ML Engineer", "rejectionReason": "Requires PyTorch and NLP, not found in resume" }
-]
 `.trim();
 };
-
 
 
 const buildUserPrompt = ({ scrapedJobsArr, keywordsArr, resumeText }) => {
@@ -227,14 +209,14 @@ const buildUserPrompt = ({ scrapedJobsArr, keywordsArr, resumeText }) => {
 
   return `ScrapedJobs Array:
 ${JSON.stringify(
-  scrapedJobsArr.map(job => ({
-    id: job.id,
-    title: job.title || '',
-    description: job.description || ''
-  })),
-  null,
-  2
-)}
+    scrapedJobsArr.map(job => ({
+      id: job.id,
+      title: job.title || '',
+      description: job.description || ''
+    })),
+    null,
+    2
+  )}
 
 Keywords Array:
 ${keywordsArr.join(', ')}
