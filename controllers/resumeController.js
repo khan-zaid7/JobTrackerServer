@@ -29,8 +29,8 @@ export const uploadResume = async (req, res) => {
       return res.status(400).json({ message: 'No file uploaded.' });
     }
 
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({ message: 'Authentication required.' });
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: `${req.user.id}` });
     }
 
     const textContent = await extractTextFromFile(file);
@@ -40,7 +40,7 @@ export const uploadResume = async (req, res) => {
       filePath: file.path,
       textContent,
       isMaster: req.body.isMaster === 'true',
-      createdBy: req.user._id, // 👈 Save the authenticated user!
+      createdBy: req.user.id, // 👈 Save the authenticated user!
     });
 
     res.json({ message: 'Resume uploaded successfully', resume });
@@ -52,7 +52,7 @@ export const uploadResume = async (req, res) => {
 
 export const getAllResumes = async (req, res) => {
   try {
-    const resumes = await Resume.find({ createdBy: req.user._id }); // 👈 Only return user's resumes
+    const resumes = await Resume.find({ createdBy: req.user.id }); // 👈 Only return user's resumes
     res.json(resumes);
   } catch (error) {
     console.error(error);
@@ -63,7 +63,7 @@ export const getAllResumes = async (req, res) => {
 export const deleteResume = async (req, res) => {
   try {
     const { id } = req.params;
-    const deleted = await Resume.findOneAndDelete({ _id: id, createdBy: req.user._id }); // 👈 Only allow user to delete their own
+    const deleted = await Resume.findOneAndDelete({ _id: id, createdBy: req.user.id }); // 👈 Only allow user to delete their own
 
     if (!deleted) {
       return res.status(404).json({ message: 'Resume not found' });
@@ -89,7 +89,7 @@ export const updateResume = async (req, res) => {
     const { isMaster } = req.body;
     const file = req.file;
 
-    const resume = await Resume.findOne({ _id: id, createdBy: req.user._id }); // 👈 Only update own resumes
+    const resume = await Resume.findOne({ _id: id, createdBy: req.user.id }); // 👈 Only update own resumes
     if (!resume) {
       return res.status(404).json({ message: 'Resume not found' });
     }
@@ -124,7 +124,7 @@ export const updateResume = async (req, res) => {
 export const getResumeById = async (req, res) => {
   try {
     const { id } = req.params;
-    const resume = await Resume.findOne({ _id: id, createdBy: req.user._id }); // 👈 Only view own resumes
+    const resume = await Resume.findOne({ _id: id, createdBy: req.user.id }); // 👈 Only view own resumes
 
     if (!resume) {
       return res.status(404).json({ message: 'Resume not found' });
