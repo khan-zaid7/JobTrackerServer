@@ -2,18 +2,17 @@ import mongoose from 'mongoose';
 
 const jobSchema = new mongoose.Schema(
   {
-    position: { type: String, required: true },
-    company: { type: String, required: true },
-    location: { type: String, default: 'Remote' },
-    status: {
-      type: String,
-      enum: ['pending', 'interview', 'declined'],
-      default: 'pending',
-    },
+    title: { type: String, required: true },
+    url: { type: String, required: true, unique: true },
+    companyName: { type: String, required: true },
+    companyUrl: { type: String },
+    location: { type: String },
+    postedTime: { type: String },
     description: { type: String },
-    salary: { type: String },
-    url: { type: String },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, required: true },
+    batchId: { type: String, required: true },
+    rejectionReason: { type: String, default: null },
+    tailoredResumeLatex: { type: String },
   },
   { timestamps: true }
 );

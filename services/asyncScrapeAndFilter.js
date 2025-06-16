@@ -4,9 +4,13 @@ import Resume from '../models/Resume.js';
 import ScrapedJob from '../models/ScrapedJob.js';
 import ScrapeSession from '../models/ScrapeSession.js';
 import { callDeepSeekAPI } from '../utils/deepseek.js';
+import Job from '../models/Job.js';
+import { tailorResumes } from '../services/tailorResume.js';
 
+// Constants
 const CHUNK_SIZE = 20;
 
+// Utility: Split array into chunks
 function chunkArray(array, size) {
   const result = [];
   for (let i = 0; i < array.length; i += size) {
@@ -14,6 +18,8 @@ function chunkArray(array, size) {
   }
   return result;
 }
+
+// Main async scrape and filter workflow
 export const asyncScrapeAndFilter = async (sessionId, url) => {
   try {
     const session = await ScrapeSession.findById(sessionId);
@@ -58,13 +64,13 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
         console.log(`\n--- DeepSeek Response (Chunk ${index + 1}) ---`);
         console.log(response);
 
+        // Attempt to parse stringified JSON (just in case)
         if (typeof response === 'string') {
           try {
-            // Remove ```json and ``` from response
             const cleaned = response
-              .replace(/^```json\s*/i, '')  // remove ```json at start
-              .replace(/^```/, '')          // just in case there's ``` without json
-              .replace(/```$/, '')          // remove trailing ```
+              .replace(/^```json\s*/i, '')
+              .replace(/^```/, '')
+              .replace(/```$/, '')
               .trim();
 
             response = JSON.parse(cleaned);
@@ -73,7 +79,6 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
             continue;
           }
         }
-
 
         if (response?.matched) matched.push(...response.matched);
         if (response?.borderline) borderline.push(...response.borderline);
@@ -86,7 +91,13 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
     }
 
     const result = await processScrapedJobs({ matched, borderline, rejected });
-    console.log(result);
+    const jobs = await saveJobs(sessionId);
+
+    if (jobs.length > 0) {
+      await tailorResumes(jobs);  // tailor only these new jobs!
+    } else {
+      console.log('No new jobs to tailor.');
+    }
 
     await ScrapeSession.findByIdAndUpdate(sessionId, {
       status: 'done',
@@ -104,6 +115,7 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
   }
 };
 
+// Update ScrapedJob documents after filtering
 export const processScrapedJobs = async ({ matched = [], borderline = [], rejected = [] }) => {
   const updates = await Promise.allSettled([
     ...matched.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
@@ -132,9 +144,51 @@ export const processScrapedJobs = async ({ matched = [], borderline = [], reject
   };
 };
 
+// Save filtered jobs (matched or borderline) to Job collection
+const saveJobs = async (sessionId) => {
+  try {
+    const session = await ScrapeSession.findById(sessionId);
+    if (!session) throw new Error('ScrapeSession not found');
 
-const buildSystemPrompt = () => {
-  return `
+    const { batchId } = session;
+    const scrapedJobs = await ScrapedJob.find({ batchId });
+    const savedJobs = [];
+
+    for (const job of scrapedJobs) {
+      if (!job.is_deleted) {
+        const existingJob = await Job.findOne({ url: job.url, createdBy: job.createdBy });
+        if (existingJob) continue;
+
+        const newJob = new Job({
+          title: job.title,
+          url: job.url,
+          companyName: job.companyName,
+          companyUrl: job.companyUrl,
+          location: job.location,
+          postedTime: job.postedTime,
+          description: job.description,
+          createdBy: job.createdBy,
+          batchId: job.batchId,
+          rejectionReason: job.rejectionReason,
+          tailoredResumeLatex: null
+        });
+
+        await newJob.save();
+        savedJobs.push(newJob); // Collect saved job
+      }
+    }
+
+    return savedJobs; // Return the array of saved jobs
+
+  } catch (error) {
+    console.error('Error saving jobs:', error.message);
+    return []; // Return empty array on error
+  }
+};
+
+
+// Build DeepSeek system prompt (rules for filtering)
+const buildSystemPrompt = () => `
 You are an AI job-matching engine that classifies scraped jobs into three categories based on a user's resume and target skills.
 
 You will receive:
@@ -196,31 +250,30 @@ Strict Instructions:
 - DO NOT fabricate or modify job data
 - NO explanation or commentary outside the JSON
 - BE DETERMINISTIC: same input → same output
-- Return plain JSON only. Do NOT wrap in markdown like '\`\`\`json or \`\`\`.'
-
+- Return plain JSON only. Do NOT wrap in markdown like '``\`json' or '\`\`\`'.
 `.trim();
-};
 
-
+// Build user prompt for DeepSeek
 const buildUserPrompt = ({ scrapedJobsArr, keywordsArr, resumeText }) => {
   if (!Array.isArray(scrapedJobsArr)) throw new Error('scrapedJobsArr must be an array');
   if (!Array.isArray(keywordsArr)) throw new Error('keywordsArr must be an array');
   if (typeof resumeText !== 'string') throw new Error('resumeText must be a string');
 
-  return `ScrapedJobs Array:
-${JSON.stringify(
-    scrapedJobsArr.map(job => ({
-      id: job.id,
-      title: job.title || '',
-      description: job.description || ''
-    })),
-    null,
-    2
-  )}
+  // Only include id, title, description
+  const jobArrClean = scrapedJobsArr.map(job => ({
+    id: job.id,
+    title: job.title || '',
+    description: job.description || ''
+  }));
+
+  return `
+ScrapedJobs Array:
+${JSON.stringify(jobArrClean, null, 2)}
 
 Keywords Array:
 ${keywordsArr.join(', ')}
 
 Resume Text:
-${resumeText}`;
+${resumeText}
+  `.trim();
 };
