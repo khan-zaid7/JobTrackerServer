@@ -222,7 +222,7 @@ async function scrapeWebsite(url = linkedInSearchUrl, sessionId) {
         }
     }
 
-    await browser.close();
+    await browser.close();ACCZZZZ
     return {allJobs, batchId};
 }
 
