@@ -1,8 +1,3 @@
-import { firefox } from 'playwright';
-import { loginToLinkedIn } from './loginToLinkedIn.js';
+import { createOrLoadSessionContext } from '../helpers/createOrLoadSessionContext.js';
 
-const browser = await firefox.launch({ headless: false, slowMo: 50 });
-const context = await browser.newContext();
-const page = await context.newPage();
-
-await loginToLinkedIn(page); // Task 1
+const { browser, context, page } = await createOrLoadSessionContext();
