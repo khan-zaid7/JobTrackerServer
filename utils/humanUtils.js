@@ -14,16 +14,18 @@ export async function humanDelay(min = 800, max = 2500) {
 
 /**
  * Simulates realistic human typing speed (25–45 WPM)
- * @param {import('playwright').Page} page
+ * @param {import('playwright').Locator} element - Input field
  * @param {string} text - The string to type
  */
-export async function typeLikeHuman(page, text) {
+export async function typeLikeHuman(element, text) {
+  await element.fill('');
   for (const char of text) {
-    await page.keyboard.type(char);
-    const delay = Math.floor(Math.random() * (480 - 267 + 1)) + 267; // Between 267ms and 480ms
+    await element.type(char);
+    const delay = Math.floor(Math.random() * (480 - 267 + 1)) + 267; // 25-45 WPM
     await new Promise(resolve => setTimeout(resolve, delay));
   }
 }
+
 
 /**
  * Simulate natural scrolling + pausing as if browsing the LinkedIn feed
@@ -99,4 +101,30 @@ export async function smoothScrollToTop(page, steps = 10) {
   console.log(`🔼 Smooth-scrolled back to top in ${steps} steps`);
   await humanDelay(800, 1500);
 }
+
+
+/**
+ * Moves mouse to a target position with human-like jitter
+ * @param {import('playwright').Page} page
+ * @param {number} targetX
+ * @param {number} targetY
+ */
+export async function moveMouseLikeHuman(page, targetX, targetY) {
+  const steps = 15 + Math.floor(Math.random() * 10); // 15–25 steps
+  const startX = targetX - 100 + Math.random() * 50;
+  const startY = targetY - 100 + Math.random() * 50;
+
+  for (let i = 1; i <= steps; i++) {
+    const progress = i / steps;
+    const intermediateX = startX + (targetX - startX) * progress + (Math.random() - 0.5) * 3;
+    const intermediateY = startY + (targetY - startY) * progress + (Math.random() - 0.5) * 3;
+
+    await page.mouse.move(intermediateX, intermediateY);
+    await humanDelay(10, 30); // tiny pause
+  }
+
+  await page.mouse.move(targetX, targetY);
+  await humanDelay(50, 120);
+}
+
 
