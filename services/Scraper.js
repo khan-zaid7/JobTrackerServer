@@ -13,6 +13,6 @@ await performJobSearch(page, {
 
 // Now that filters are present, apply them
 await applyFilter(page, {
-  datePosted: 'Past 24 hours',
-  experienceLevels: ['Entry level', 'Associate'],
-});
+    "Date posted": 'Past 24 hours',
+    "Experience level": ['Entry level', 'Associate']
+  });

@@ -1,12 +1,12 @@
 import { humanDelay, moveMouseLikeHuman } from '../utils/humanUtils.js';
 
-export async function applyFilter(page, options = {}) {
-  const tab = {
+export async function applyFilter(page, options = {
     "Date posted": 'Past 24 hours',
     "Experience level": ['Entry level', 'Associate']
-  };
+  }) {
+  
   let counter = 1;
-  for (const [key, value] of Object.entries(tab)) {
+  for (const [key, value] of Object.entries(options)) {
     console.log("---------------------------------", counter);
     await humanDelay(1000, 2500);
     await filterFunction(page, key, value);
