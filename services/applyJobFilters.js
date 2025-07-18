@@ -1,4 +1,12 @@
 import { humanDelay, moveMouseLikeHuman } from '../utils/humanUtils.js';
+import {
+  FILTER_BUTTON,
+  ACTIVE_FILTER_MENU,
+  FILTER_OPTION_LOCATOR,
+  SHOW_RESULTS_BUTTON,
+  JOB_CARD_CONTAINER_LINK
+} from '../config/pageLocators.js';
+
 
 export async function applyFilter(page, options = {
     "Date posted": 'Past 24 hours',
@@ -20,7 +28,7 @@ const filterFunction = async (page, filterLabel, filterName) => {
 
     await humanDelay(1000, 2500);
 
-    const filterButton = page.locator(`button.search-reusables__filter-pill-button:has-text("${filterLabel}")`);
+    const filterButton = page.locator(FILTER_BUTTON(filterLabel));
     await filterButton.waitFor({ state: 'visible', timeout: 15000 });
     await filterButton.scrollIntoViewIfNeeded();
     await humanDelay(500, 1000);
@@ -31,15 +39,15 @@ const filterFunction = async (page, filterLabel, filterName) => {
       await filterButton.click({ force: true });
     }
 
-    await page.waitForSelector('.artdeco-hoverable-content__content:visible', { timeout: 15000 });
-    const activeFilterMenu = page.locator('.artdeco-hoverable-content__content:visible');
+    await page.waitForSelector(ACTIVE_FILTER_MENU(), { timeout: 15000 });
+    const activeFilterMenu = page.locator(ACTIVE_FILTER_MENU());
 
     console.log(activeFilterMenu);
     await humanDelay(1000, 2000);
 
     const filterNames = Array.isArray(filterName) ? filterName : [filterName];
     for (const name of filterNames) {
-      const optionLocator = activeFilterMenu.locator(`.search-reusables__value-label:has-text("${name}")`);
+      const optionLocator = activeFilterMenu.locator(FILTER_OPTION_LOCATOR(name));
       await optionLocator.waitFor({ state: 'visible', timeout: 10000 });
       await optionLocator.scrollIntoViewIfNeeded();
       await humanDelay(300, 800);
@@ -52,7 +60,7 @@ const filterFunction = async (page, filterLabel, filterName) => {
       }
     }
 
-    const showResultsBtn = activeFilterMenu.locator('button.artdeco-button--primary')
+    const showResultsBtn = activeFilterMenu.locator(SHOW_RESULTS_BUTTON())
       .filter({ hasText: /Show/i })
       .filter({ hasText: /result/i });
 
@@ -62,7 +70,7 @@ const filterFunction = async (page, filterLabel, filterName) => {
     if (btnBox) {
       await moveMouseLikeHuman(page, btnBox.x + 10, btnBox.y + 10);
       await showResultsBtn.click({ force: true });
-      await page.waitForSelector('.job-card-container__link', { timeout: 15000 });
+      await page.waitForSelector(JOB_CARD_CONTAINER_LINK(), { timeout: 15000 });
       await humanDelay(2000, 3000);
     }
 

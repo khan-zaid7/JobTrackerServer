@@ -1,3 +1,4 @@
+import { LOCATION_INPUT, SUGGESTION_LOCATOR, TITLE_INPUT } from '../config/pageLocators.js';
 import { typeLikeHuman, humanDelay, moveMouseLikeHuman } from '../utils/humanUtils.js';
 
 export async function performJobSearch(page, { title = 'Software Developer', location = 'Canada' }) {
@@ -5,21 +6,21 @@ export async function performJobSearch(page, { title = 'Software Developer', loc
 
   try {
     // Step 1: Type location
-    const locationInput = page.locator('input[id^="jobs-search-box-location-id"]');
+    const locationInput = page.locator(LOCATION_INPUT());
     await locationInput.scrollIntoViewIfNeeded();
     await locationInput.click({ clickCount: 3 });
     await typeLikeHuman(locationInput, location);
     await humanDelay(800, 1200);
 
     // Step 2: Type title
-    const titleInput = page.locator('input[id^="jobs-search-box-keyword-id"]');
+    const titleInput = page.locator(TITLE_INPUT());
     await titleInput.scrollIntoViewIfNeeded();
     await titleInput.click({ clickCount: 3 });
     await typeLikeHuman(titleInput, title);
     await humanDelay(800, 1200);
 
     // Step 3: Click first location suggestion to trigger search
-    const suggestions = page.locator('.jobs-search-box__typeahead-results li');
+    const suggestions = page.locator(SUGGESTION_LOCATOR());
     await suggestions.first().waitFor({ timeout: 5000 });
 
     const box = await suggestions.first().boundingBox();

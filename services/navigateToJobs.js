@@ -1,3 +1,4 @@
+import { JOBS_NAV, JOBS_PAGE_LOCATOR } from '../config/pageLocators.js';
 import { humanDelay } from '../utils/humanUtils.js';
 
 /**
@@ -9,7 +10,7 @@ export async function clickJobsNav(page) {
     console.log('🧭 Looking for "Jobs" nav item...');
 
     // Target ONLY nav bar link with visible "Jobs" label
-    const jobsNav = page.locator('nav.global-nav__nav a', {
+    const jobsNav = page.locator(JOBS_NAV(), {
       hasText: 'Jobs'
     });
 
@@ -27,7 +28,7 @@ export async function clickJobsNav(page) {
     await jobsNav.click();
 
     // Wait for the Jobs page to load
-    await page.waitForURL('**/jobs/**', { timeout: 20000 });
+    await page.waitForURL(JOBS_PAGE_LOCATOR(), { timeout: 20000 });
     await humanDelay(3000, 10000); // <-- simulate user reading the Jobs page
 
     console.log('✅ Navigated to Jobs page.');

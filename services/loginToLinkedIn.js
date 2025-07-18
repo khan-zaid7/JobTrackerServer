@@ -1,6 +1,13 @@
 // helpers/loginToLinkedIn.js
 import dotenv from 'dotenv';
 import { humanDelay, typeLikeHuman, simulateFeedScroll } from '../utils/humanUtils.js';
+import { 
+    GLOBAL_NAV,
+    LINKEDIN_LOGIN_URL,
+    LOGIN_BUTTON_LOCATOR,
+    LOGIN_EMAIL_INPUT,
+    LOGIN_PASSWORD_INPUT
+  } from '../config/pageLocators.js';
 
 dotenv.config();
 
@@ -28,28 +35,28 @@ export async function loginToLinkedIn(page) {
 
 async function openLoginPage(page) {
   console.log('🌐 Navigating to LinkedIn Login Page...');
-  await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' });
+  await page.goto(LINKEDIN_LOGIN_URL(), { waitUntil: 'domcontentloaded' });
   await humanDelay(1500, 3000);
 }
 
 async function fillCredentials(page, email, password) {
   console.log('⌨️ Typing email...');
-  const emailInput = await page.locator('#username');
+  const emailInput = await page.locator(LOGIN_EMAIL_INPUT());
   await emailInput.scrollIntoViewIfNeeded();
   await humanDelay(500, 1000);
   await emailInput.click();
-  await typeLikeHuman(page, email);
+  await typeLikeHuman(emailInput, email);
 
   console.log('🔐 Typing password...');
-  const passwordInput = await page.locator('#password');
+  const passwordInput = await page.locator(LOGIN_PASSWORD_INPUT());
   await humanDelay(500, 1000);
   await passwordInput.click();
-  await typeLikeHuman(page, password);
+  await typeLikeHuman(passwordInput, password);
 }
 
 async function submitLoginForm(page) {
   console.log('🖱️ Clicking login button...');
-  const loginButton = page.locator('button[type="submit"]');
+  const loginButton = page.locator(LOGIN_BUTTON_LOCATOR());
   const box = await loginButton.boundingBox();
   if (box) {
     await page.mouse.move(box.x + 10, box.y + 10);
@@ -60,6 +67,6 @@ async function submitLoginForm(page) {
 
 async function waitForFeedPage(page) {
   console.log('⏳ Waiting for feed page or login confirmation...');
-  await page.waitForSelector('#global-nav', { timeout: 30000 });
+  await page.waitForSelector(GLOBAL_NAV(), { timeout: 30000 });
   await humanDelay(2000, 3000);
 }
