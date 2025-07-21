@@ -4,9 +4,8 @@ import { createOrLoadSessionContext } from '../helpers/createOrLoadSessionContex
 import { clickJobsNav } from '../services/navigateToJobs.js';
 import { performJobSearch } from '../services/performJobSearch.js';
 import { applyFilter } from './applyJobFilters.js';
-import { scrollJobsList } from '../services/scrollJobsList.js'; // Import the modularized scrolling function
 import { retrieveTotalJobCount } from '../services/retrieveJobCount.js'; // Import the new modularized job count function
-
+import { processAllJobCardsWithScrolling } from './jobCardProcessor.js';
 /**
  * Main function to orchestrate the LinkedIn job scraping process.
  * This function handles browser setup, navigation, search, filtering,
@@ -57,7 +56,7 @@ async function runJobScraper() {
         console.log("\n--- Starting Phase 2: Scrolling Job List ---");
         try {
             // Call the modularized scrolling function
-            await scrollJobsList(page);
+            await processAllJobCardsWithScrolling(page);
             console.log("Finished scrolling the current job list.");
         } catch (error) {
             console.error(`Error during Phase 2 (Scrolling Job List): ${error.message}`);
