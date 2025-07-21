@@ -64,3 +64,32 @@ export let TITLE_INPUT = () => {
 export let SUGGESTION_LOCATOR = () => {
     return `.jobs-search-box__typeahead-results li`;
 }
+// selectors.js
+
+/**
+ * Centralized collection of CSS selectors for new functionality
+ * being built from scratch (e.g., list scrolling, pagination, detail card interaction).
+ * Existing selectors used by other services (like login, navigation, search, filters)
+ * are NOT included here to avoid conflicts with existing codebases.
+ */
+export const selectors = {
+     // Selector for the main scrollable DIV element containing job cards.
+    // Corrected based on the latest screenshot. This targets the div with class 'scaffold-layout__list'.
+    scrollableJobsContainer: 'div.scaffold-layout__list > div',
+
+    // Selector for the element displaying the total number of job results.
+    // Corrected based on the provided screenshot to target the specific span containing the count.
+    // Example: "243,990 results"
+    totalResultsCount: '.jobs-search-results-list__text small span[dir="ltr"]',
+
+    // Selector for individual job card LI elements within the UL.
+    // Revised to use the highly robust 'data-occludable-job-id' attribute.
+    jobCardLi: 'li[data-occludable-job-id]',
+
+    // Selector for the "Next" pagination button.
+    paginationNextButton: 'button[aria-label="Next"]',
+
+    // Selector for the job details card that appears on the right when an LI is clicked.
+    jobDetailCard: '.jobs-search__job-details--wrapper',
+};
+
