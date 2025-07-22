@@ -1,5 +1,8 @@
 import { selectors } from '../config/pageLocators.js';
-
+import extractJobDetails from './jobDetailExtractor.js';
+import { ParseJobDetailsSummary } from './jobDetailsSummaryParser.js';
+import { hasNextPaginationPage, goToNextPaginationPage } from './paginationHandler.js';
+import ScrapedJob from '../models/ScrapedJob.js';
 /**
  * Slowly scroll the job detail card with randomized steps, simulating human reading.
  * @param {import('@playwright/test').Page} page
@@ -42,7 +45,7 @@ async function scrollJobDetailCard(page) {
         } else {
             noProgressCount = 0;
             lastScrollTop = scrolled.scrollTop;
-            console.log(`📜 Scrolled to position: ${lastScrollTop}`);
+            // console.log(`📜 Scrolled to position: ${lastScrollTop}`);
         }
 
         await page.waitForTimeout(400 + Math.random() * 500);
@@ -181,6 +184,14 @@ export async function processAllJobCardsWithScrolling(page) {
                 await page.waitForSelector(selectors.jobDetailCard, { timeout: 7000 });
                 await page.waitForTimeout(1500 + Math.random() * 1500);
                 await scrollJobDetailCard(page);
+                const jobData = await extractJobDetails(page);
+                
+                // Parse job data in a summary file 
+                await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
+                
+                //  save the scrapedjob 
+                await saveScrapedJob(jobData);
+
             } catch (error) {
                 console.log(`❌ Failed to load or scroll job detail for ID ${jobId}:`, error);
             }
@@ -237,4 +248,27 @@ export async function processAllJobCardsWithScrolling(page) {
     }
 
     console.log("🎉 Completed processing all job cards.");
+    // After "🎉 Completed processing all job cards."
+    let pageNumber = 1;
+
+    while (await hasNextPaginationPage(page)) {
+        pageNumber++;
+        await goToNextPaginationPage(page);
+        console.log(`📄 Starting to process page ${pageNumber}...`);
+        await processAllJobCardsWithScrolling(page); // re-use your existing logic
+    }
+
+    console.log("🏁 All pagination pages processed. Exiting.");
+    await page.context().close(); // or browser.close() depending on where you manage the browser instance
+
+}
+
+
+const saveScrapedJob = async (jobData) => {
+    const savedJob = await ScrapedJob.saveJobIfNotExists(jobData);
+    if (savedJob) {
+        console.log('Job saved:', savedJob._id);
+    } else {
+        console.log('Job was duplicate, skipped saving.');
+    }
 }
