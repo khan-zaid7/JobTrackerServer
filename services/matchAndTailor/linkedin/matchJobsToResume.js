@@ -105,19 +105,22 @@ export const processScrapedJobs = async ({ matched = [], borderline = [], reject
     ...matched.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
       isRelevant: true,
       is_deleted: false,
-      rejectionReason: null
+      rejectionReason: null,
+      confidenceFactor: job.confidence
     }, { new: true })),
 
     ...borderline.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
       isRelevant: false,
       is_deleted: false,
-      rejectionReason: job.reason || 'Borderline match: minor mismatch'
+      rejectionReason: job.reason || 'Borderline match: minor mismatch',
+      confidenceFactor: job.confidence
     }, { new: true })),
 
     ...rejected.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
       isRelevant: false,
       is_deleted: true,
-      rejectionReason: job.rejectionReason || 'Not relevant'
+      rejectionReason: job.rejectionReason || 'Not relevant',
+      confidenceFactor: job.confidence
     }, { new: true }))
   ]);
 
@@ -131,71 +134,79 @@ export const processScrapedJobs = async ({ matched = [], borderline = [], reject
 
 const buildSystemPrompt = () => {
   return `
-You are an AI job-matching engine that classifies scraped jobs into three categories based on a user's resume and target skills.
+    You are an AI job-matching engine that classifies scraped jobs into three categories based on a user's resume and target skills.
 
-You will receive:
-- scrapedJobsArr: Array of job objects, each with { id, title, description, companyName, location }
-- keywordsArr: List of technologies or roles the user is targeting
-- resumeText: The user’s resume in plain text
+    You will receive:
+    - scrapedJobsArr: Array of job objects, each with { id, title, description, companyName, location }
+    - keywordsArr: List of technologies or roles the user is targeting
+    - resumeText: The user’s resume in plain text
 
-🎯 Your Task:
-Evaluate each job in scrapedJobsArr and classify it as one of:
-1. "matched" – Strongly relevant
-2. "borderline" – Somewhat relevant, worth showing
-3. "rejected" – Not a match
+    🎯 Your Task:
+    Evaluate each job in scrapedJobsArr and classify it as one of:
+    1. "matched" – Strongly relevant
+    2. "borderline" – Somewhat relevant, worth showing
+    3. "rejected" – Not a match
 
-🧠 Matching Rules:
+    🧠 Matching Rules:
 
-✅ **Matched Jobs** (high-confidence):
-- At least **2 or more matching skills/technologies/tools**
-- Matches title (or reasonable equivalent)
-- Passes experience requirement (or comes close for junior roles)
+    ✅ **Matched Jobs** (high-confidence):
+    - At least **2 or more matching skills/technologies/tools**
+    - Matches title (or reasonable equivalent)
+    - Passes experience requirement (or comes close for junior roles)
 
-⚠️ **Borderline Jobs** (partial match):
-- Only **1 strong skill match**
-- OR missing **only 1 key requirement**
-- OR good title/tech match, but resume is slightly lacking
-- These jobs should include a "reason" field that explains the borderline status
+    ⚠️ **Borderline Jobs** (partial match):
+    - Only **1 strong skill match**
+    - OR missing **only 1 key requirement**
+    - OR good title/tech match, but resume is slightly lacking
+    - These jobs should include a "reason" field that explains the borderline status
 
-❌ **Rejected Jobs** (clear mismatch):
-- No strong tech/tool overlap
-- OR requires very specific tools or domains (e.g., PyTorch, Guidewire, ServiceNow) that are not present
-- Must include a "rejectionReason" — clear and specific (not vague)
+    ❌ **Rejected Jobs** (clear mismatch):
+    - No strong tech/tool overlap
+    - OR requires very specific tools or domains (e.g., PyTorch, Guidewire, ServiceNow) that are not present
+    - Must include a "rejectionReason" — clear and specific (not vague)
 
-💡 Conceptual Title Equivalents (apply flexibly):
-- Full Stack ≈ Software Engineer ≈ Web Developer
-- DevOps ≈ SRE ≈ Cloud Engineer
-- Backend ≈ API Developer ≈ Server Engineer
-- Frontend ≈ JavaScript Developer ≈ UI Engineer
-- Security ≈ Application Security ≈ Cloud Security
+    💡 Conceptual Title Equivalents (apply flexibly):
+    - Full Stack ≈ Software Engineer ≈ Web Developer
+    - DevOps ≈ SRE ≈ Cloud Engineer
+    - Backend ≈ API Developer ≈ Server Engineer
+    - Frontend ≈ JavaScript Developer ≈ UI Engineer
+    - Security ≈ Application Security ≈ Cloud Security
 
-🚫 Reject jobs requiring:
-- "French", "Bilingual", or other non-English languages (unless resume mentions it)
-- Niche domain tools (e.g., SAS AML, Guidewire, CNC tools) not found in resume/keywordsArr
+    🚫 Reject jobs requiring:
+    - "French", "Bilingual", or other non-English languages (unless resume mentions it)
+    - Niche domain tools (e.g., SAS AML, Guidewire, CNC tools) not found in resume/keywordsArr
 
-📤 Output Format:
-Return a JSON object:
-{
-  matched: [ { id, title } ],
-  borderline: [ { id, title, reason } ],
-  rejected: [ { id, title, rejectionReason } ]
-}
+    📤 Output Format:
+    Return a JSON object:
+    {
+      matched: [ { id, title } ],
+      borderline: [ { id, title, reason } ],
+      rejected: [ { id, title, rejectionReason } ]
+    }
 
-📌 Reason Guidelines:
-- Must be **specific and one-line**
-- Examples:
-  - "Missing Kubernetes but has Docker and CI/CD"
-  - "Requires SAS AML domain tools not found in resume"
-  - "Has React and Node but lacks GraphQL"
+    📌 Reason Guidelines:
+    - Must be **specific and one-line**
+    - Examples:
+      - "Missing Kubernetes but has Docker and CI/CD"
+      - "Requires SAS AML domain tools not found in resume"
+      - "Has React and Node but lacks GraphQL"
 
-Strict Instructions:
-- DO NOT fabricate or modify job data
-- NO explanation or commentary outside the JSON
-- BE DETERMINISTIC: same input → same output
-- Return plain JSON only. Do NOT wrap in markdown like '\`\`\`json or \`\`\`.'
+    📊 **Required: Confidence** :
+    - Add a numeric confidence score (0 to 1) for each job
+    - Reflect overall match quality (e.g., skill overlap, title match, resume support)
+    - Use:
+      - 0.9–1.0 for strong match
+      - 0.6–0.89 for borderline
+      - below 0.6 for rejected
 
-`.trim();
-};
+    Strict Instructions:
+    - DO NOT fabricate or modify job data
+    - NO explanation or commentary outside the JSON
+    - BE DETERMINISTIC: same input → same output
+    - Return plain JSON only. Do NOT wrap in markdown like '\`\`\`json or \`\`\`.'
+
+    `.trim();
+  };
 
 
 const buildUserPrompt = ({ scrapedJobsArr, keywordsArr, resumeText }) => {

@@ -16,11 +16,15 @@ const ScrapedJobSchema = new mongoose.Schema({
     phone: { type: String, default: null },
     linkedin: { type: String, default: null }
   },
+  confidenceFactor: { type: Number, default: null },
   createdBy: { type: mongoose.Schema.Types.ObjectId, required: false },
   batchId: { type: String, required: false },
   isRelevant: { type: Boolean, default: false },
   is_deleted: { type: Boolean, default: false },
-  rejectionReason: { type: String, default: null }
+  rejectionReason: { type: String, default: null },
+
+  // ✅ New field to link to Resume
+  resumeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Resume', default: null }
 }, {
   timestamps: true
 });
@@ -39,31 +43,30 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     batchId = null,
     isRelevant = false,
     is_deleted = false,
-    rejectionReason = null
+    rejectionReason = null,
+    confidenceFactor = null,
+    resumeId = null // ✅ Accept resumeId from input
   } = jobDetails;
 
-  // Normalize description arrays to prevent schema mismatch
+  // Normalize description arrays
   const normalizedDescription = {
     responsibilities: Array.isArray(description.responsibilities) ? description.responsibilities : [],
     qualifications: Array.isArray(description.qualifications) ? description.qualifications : [],
     benefits: Array.isArray(description.benefits) ? description.benefits : []
   };
 
-  // Normalize relatedReferences
   const normalizedReferences = {
     email: relatedReferences.email || null,
     phone: relatedReferences.phone || null,
     linkedin: relatedReferences.linkedin || null
   };
 
-  // Check duplicate by URL
   const existing = await this.findOne({ url });
   if (existing) {
     console.log(`[Duplicate Skipped] ${title} @ ${companyName}`);
     return null;
   }
 
-  // Create new document
   const jobDoc = new this({
     title,
     url,
@@ -72,11 +75,13 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     postedTime: postedAt,
     description: normalizedDescription,
     relatedReferences: normalizedReferences,
+    confidenceFactor,
     createdBy,
     batchId,
     isRelevant,
     is_deleted,
-    rejectionReason
+    rejectionReason,
+    resumeId // ✅ Store resume reference
   });
 
   try {
