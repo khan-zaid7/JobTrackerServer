@@ -1,6 +1,6 @@
 // services/retrieveJobCount.js
 
-import { selectors } from '../config/pageLocators.js';
+import { selectors } from '../../../config/pageLocators.js';
 /**
  * Retrieves the total number of job results from the page.
  * Throws a specific error if the element is not found or the count cannot be parsed.

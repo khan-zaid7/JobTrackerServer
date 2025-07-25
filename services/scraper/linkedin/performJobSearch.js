@@ -1,5 +1,5 @@
-import { LOCATION_INPUT, SUGGESTION_LOCATOR, TITLE_INPUT } from '../config/pageLocators.js';
-import { typeLikeHuman, humanDelay, moveMouseLikeHuman } from '../utils/humanUtils.js';
+import { LOCATION_INPUT, SUGGESTION_LOCATOR, TITLE_INPUT } from '../../../config/pageLocators.js';
+import { typeLikeHuman, humanDelay, moveMouseLikeHuman } from '../../../utils/humanUtils.js';
 
 export async function performJobSearch(page, { title = 'Software Developer', location = 'Canada' }) {
   console.log('⌨️ Typing job location and title...');

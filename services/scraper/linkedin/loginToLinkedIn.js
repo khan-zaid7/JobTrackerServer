@@ -1,13 +1,13 @@
 // helpers/loginToLinkedIn.js
 import dotenv from 'dotenv';
-import { humanDelay, typeLikeHuman, simulateFeedScroll } from '../utils/humanUtils.js';
+import { humanDelay, typeLikeHuman, simulateFeedScroll } from '../../../utils/humanUtils.js';
 import { 
     GLOBAL_NAV,
     LINKEDIN_LOGIN_URL,
     LOGIN_BUTTON_LOCATOR,
     LOGIN_EMAIL_INPUT,
     LOGIN_PASSWORD_INPUT
-  } from '../config/pageLocators.js';
+  } from '../../../config/pageLocators.js';
 
 dotenv.config();
 

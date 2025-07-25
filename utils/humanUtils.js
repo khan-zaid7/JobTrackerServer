@@ -1,5 +1,7 @@
 // utils/humanUtils.js
 
+import { format } from 'date-fns';
+
 /**
  * Simulates a human-like delay
  * @param {number} min - minimum delay in ms
@@ -127,4 +129,10 @@ export async function moveMouseLikeHuman(page, targetX, targetY) {
   await humanDelay(50, 120);
 }
 
+export const getHourlyToken = (date = new Date()) => {
+  const day = format(date, 'dd-MM-yyyy');
+  const hour = date.getHours(); // 0 to 23
+  const hourLabel = `${String(hour).padStart(2, '0')}:00`;
 
+  return `${day}-${hourLabel}`;
+}

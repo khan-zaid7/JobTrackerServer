@@ -1,9 +1,9 @@
 import { firefox } from 'playwright';
 import { sub, format } from 'date-fns';
-import ScrapedJob from '../models/ScrapedJob.js';
+import ScrapedJob from '../../../models/ScrapedJob.js';
 import { v4 as uuidv4 } from 'uuid';
-import ScrapeSession from '../models/ScrapeSession.js';
-import { RANDOMUSERID } from '../config/constants.js';
+import ScrapeSession from '../../../models/ScrapeSession.js';
+import { RANDOMUSERID } from '../../../config/constants.js';
 
 function parseLinkedInDate(relativeTime) {
     const now = new Date();
@@ -39,7 +39,7 @@ async function smoothScrollToTop(page) {
     }
 }
 
-async function loadAllJobs(page) {
+export async function loadAllJobs(page) {
     let previousHeight = 0;
     let currentHeight = 0;
     let attempts = 0;
@@ -187,12 +187,12 @@ async function scrapeWebsite(url = linkedInSearchUrl, sessionId) {
     // Create batch
     const batchId = uuidv4();
     // 👇 Update existing session — DO NOT create new one
-    await ScrapeSession.findByIdAndUpdate(sessionId, {
-        batchId,
-        jobCount: count,
-        status: 'scraping',
-        note: 'Scraping started'
-    });
+    // await ScrapeSession.findByIdAndUpdate(sessionId, {
+    //     batchId,
+    //     jobCount: count,
+    //     status: 'scraping',
+    //     note: 'Scraping started'
+    // });
 
     for (let i = 0; i < count; i++) {
         const row = jobRows.nth(i);
@@ -222,7 +222,7 @@ async function scrapeWebsite(url = linkedInSearchUrl, sessionId) {
         }
     }
 
-    await browser.close();ACCZZZZ
+    await browser.close();
     return {allJobs, batchId};
 }
 

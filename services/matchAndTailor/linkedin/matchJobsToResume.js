@@ -1,10 +1,6 @@
-// ✅ Imports
-import scrapeWebsite from '../services/LinkedInScraper.js';
-import Resume from '../models/Resume.js';
-import ScrapedJob from '../models/ScrapedJob.js';
-import ScrapeSession from '../models/ScrapeSession.js';
-import { callDeepSeekAPI } from '../utils/deepseek.js';
-
+import ScrapedJob from '../../../models/ScrapedJob.js';
+import PipelineSession from '../../../models/PipelineSession.js';
+import { callDeepSeekAPI } from '../../../utils/deepseek.js';
 const CHUNK_SIZE = 20;
 
 function chunkArray(array, size) {
@@ -14,38 +10,55 @@ function chunkArray(array, size) {
   }
   return result;
 }
-export const asyncScrapeAndFilter = async (sessionId, url) => {
-  try {
-    const session = await ScrapeSession.findById(sessionId);
-    if (!session) throw new Error('ScrapeSession not found');
+export const matchJobsToResume = async (batchToken, resume, tags = []) => {
+  // start a new pipeline session
+  const pipelineSession = await PipelineSession.create({
+    userId: '680860a5c86b10aabe3bd656',
+    batchId: batchToken,
+    resumeId: resume._id,
+    tags: tags,
+    status: 'pending',
+    note: 'Starting scrape...'
+  });
 
-    const { resumeId, tags } = session;
-    const resume = await Resume.findById(resumeId);
-    if (!resume) throw new Error('Resume not found');
+  try {
+    if (!resume) throw new Error('Resume is required');
 
     const resumeText = resume.textContent;
     const keywordsArr = tags.map(t => t.trim());
 
-    const { allJobs, batchId } = await scrapeWebsite(url || undefined, sessionId);
-
     const scrapedJobs = await ScrapedJob.find(
-      { batchId },
-      { _id: 1, title: 1, description: 1 }
+      { batchId: batchToken },
+      { _id: 1, title: 1, description: 1, companyName: 1, location: 1 }
     ).lean();
 
-    await ScrapeSession.findByIdAndUpdate(sessionId, {
+    console.warn(`SCRAPED JOBS: ${scrapedJobs}`)
+
+    if (!scrapedJobs.length) {
+      await PipelineSession.findByIdAndUpdate(pipelineSession.id, {
+        status: 'done',
+        jobCount: 0,
+        filteredCount: 0,
+        note: 'No jobs to filter.'
+      });
+      return;
+    }
+
+    await PipelineSession.findByIdAndUpdate(pipelineSession.id, {
       status: 'filtering',
-      batchId,
+      batchId: batchToken,
       note: 'Filtering in progress...'
     });
 
-    const allFormatted = scrapedJobs.map(j => ({
+    const allFormattedJobs = scrapedJobs.map(j => ({
       id: j._id.toString(),
       title: j.title,
-      description: j.description || ''
+      description: j.description || '',
+      companyName: j.companyName || '',
+      location: j.location || ''
     }));
 
-    const jobChunks = chunkArray(allFormatted, CHUNK_SIZE);
+    const jobChunks = chunkArray(allFormattedJobs, CHUNK_SIZE);
     let matched = [], borderline = [], rejected = [];
 
     for (const [index, chunk] of jobChunks.entries()) {
@@ -57,23 +70,6 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
 
         console.log(`\n--- DeepSeek Response (Chunk ${index + 1}) ---`);
         console.log(response);
-
-        if (typeof response === 'string') {
-          try {
-            // Remove ```json and ``` from response
-            const cleaned = response
-              .replace(/^```json\s*/i, '')  // remove ```json at start
-              .replace(/^```/, '')          // just in case there's ``` without json
-              .replace(/```$/, '')          // remove trailing ```
-              .trim();
-
-            response = JSON.parse(cleaned);
-          } catch (parseError) {
-            console.error('❌ Failed to parse DeepSeek API response:', response);
-            continue;
-          }
-        }
-
 
         if (response?.matched) matched.push(...response.matched);
         if (response?.borderline) borderline.push(...response.borderline);
@@ -88,14 +84,14 @@ export const asyncScrapeAndFilter = async (sessionId, url) => {
     const result = await processScrapedJobs({ matched, borderline, rejected });
     console.log(result);
 
-    await ScrapeSession.findByIdAndUpdate(sessionId, {
+    await PipelineSession.findByIdAndUpdate(pipelineSession.id, {
       status: 'done',
-      jobCount: allFormatted.length,
+      jobCount: allFormattedJobs.length,
       filteredCount: matched.length,
       note: `Filtering complete. Found ${matched.length} relevant jobs.`
     });
   } catch (error) {
-    await ScrapeSession.findByIdAndUpdate(sessionId, {
+    await PipelineSession.findByIdAndUpdate(pipelineSession.id, {
       status: 'failed',
       error: error.message
     });
@@ -138,7 +134,7 @@ const buildSystemPrompt = () => {
 You are an AI job-matching engine that classifies scraped jobs into three categories based on a user's resume and target skills.
 
 You will receive:
-- scrapedJobsArr: Array of job objects, each with { id, title, description }
+- scrapedJobsArr: Array of job objects, each with { id, title, description, companyName, location }
 - keywordsArr: List of technologies or roles the user is targeting
 - resumeText: The user’s resume in plain text
 
@@ -212,7 +208,10 @@ ${JSON.stringify(
     scrapedJobsArr.map(job => ({
       id: job.id,
       title: job.title || '',
-      description: job.description || ''
+      description: flattenDescription(job.description),
+      companyName: job.companyName,
+      location: job.location
+
     })),
     null,
     2
@@ -224,3 +223,23 @@ ${keywordsArr.join(', ')}
 Resume Text:
 ${resumeText}`;
 };
+
+function flattenDescription(desc) {
+  if (!desc || typeof desc !== 'object') return '';
+
+  const parts = [];
+
+  if (Array.isArray(desc.responsibilities)) {
+    parts.push('Responsibilities:\n' + desc.responsibilities.join('\n'));
+  }
+
+  if (Array.isArray(desc.qualifications)) {
+    parts.push('Qualifications:\n' + desc.qualifications.join('\n'));
+  }
+
+  if (Array.isArray(desc.benefits)) {
+    parts.push('Benefits:\n' + desc.benefits.join('\n'));
+  }
+
+  return parts.join('\n\n');
+}

@@ -1,17 +1,24 @@
 // main.js
 
-import { createOrLoadSessionContext } from '../helpers/createOrLoadSessionContext.js';
-import { clickJobsNav } from '../services/navigateToJobs.js';
-import { performJobSearch } from '../services/performJobSearch.js';
+import { createOrLoadSessionContext } from './createOrLoadSessionContext.js';
+import { clickJobsNav } from './navigateToJobs.js';
+import { performJobSearch } from './performJobSearch.js';
 import { applyFilter } from './applyJobFilters.js';
-import { retrieveTotalJobCount } from '../services/retrieveJobCount.js'; // Import the new modularized job count function
+import { retrieveTotalJobCount } from './retrieveJobCount.js'; 
 import { processAllJobCardsWithScrolling } from './jobCardProcessor.js';
 /**
  * Main function to orchestrate the LinkedIn job scraping process.
  * This function handles browser setup, navigation, search, filtering,
  * and orchestrates the modularized phases of data retrieval.
  */
-async function runJobScraper() {
+
+
+// ----------------------------------------------------------------
+
+export async function runJobScraper(query = { search_term, location }) {
+
+    if (!query) throw new Error('Search Parameters are required!');
+    
     let browser, context, page;
     try {
         // 1. Initialize browser context
@@ -26,8 +33,8 @@ async function runJobScraper() {
         // 3. Perform initial job search
         // This function uses existing selectors from your project (e.g., TITLE_INPUT, LOCATION_INPUT from pageLocator)
         await performJobSearch(page, {
-            title: 'Software Developer',
-            location: 'Canada'
+            title: query.search_term,
+            location: query.location
         });
         console.log("Performed job search.");
 
@@ -54,15 +61,17 @@ async function runJobScraper() {
 
         // --- Phase 2: Exhaustive Scrolling of the Current Job List (UL) ---
         console.log("\n--- Starting Phase 2: Scrolling Job List ---");
+        let batchToken = null; 
         try {
             // Call the modularized scrolling function
-            await processAllJobCardsWithScrolling(page);
+            batchToken = await processAllJobCardsWithScrolling(page);
             console.log("Finished scrolling the current job list.");
         } catch (error) {
             console.error(`Error during Phase 2 (Scrolling Job List): ${error.message}`);
             throw error; // Re-throw the specific error from the service
         }
         // --- End of Phase 2 ---
+        return batchToken;
 
     } catch (error) {
         console.error(`An unhandled critical error occurred during the scraping process: ${error.message}`);
@@ -82,6 +91,4 @@ async function runJobScraper() {
     }
 }
 
-// Execute the main scraper function
-runJobScraper();
 

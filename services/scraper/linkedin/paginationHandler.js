@@ -1,5 +1,5 @@
 // paginationHandler.js
-import { selectors } from '../config/pageLocators.js';
+import { selectors } from '../../../config/pageLocators.js';
 
 /**
  * Checks if there's a "Next" button in the pagination and returns its status.

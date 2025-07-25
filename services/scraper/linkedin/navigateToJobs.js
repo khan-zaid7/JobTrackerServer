@@ -1,5 +1,5 @@
-import { JOBS_NAV, JOBS_PAGE_LOCATOR } from '../config/pageLocators.js';
-import { humanDelay } from '../utils/humanUtils.js';
+import { JOBS_NAV, JOBS_PAGE_LOCATOR } from '../../../config/pageLocators.js';
+import { humanDelay } from '../../../utils/humanUtils.js';
 
 /**
  * Clicks on the Jobs nav item from the LinkedIn feed top navbar

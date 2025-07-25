@@ -1,11 +1,11 @@
-import { humanDelay, moveMouseLikeHuman } from '../utils/humanUtils.js';
+import { humanDelay, moveMouseLikeHuman } from '../../../utils/humanUtils.js';
 import {
   FILTER_BUTTON,
   ACTIVE_FILTER_MENU,
   FILTER_OPTION_LOCATOR,
   SHOW_RESULTS_BUTTON,
   JOB_CARD_CONTAINER_LINK
-} from '../config/pageLocators.js';
+} from '../../../config/pageLocators.js';
 
 
 export async function applyFilter(page, options = {

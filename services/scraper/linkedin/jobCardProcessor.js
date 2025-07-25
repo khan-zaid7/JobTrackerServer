@@ -1,8 +1,9 @@
-import { selectors } from '../config/pageLocators.js';
+import { selectors } from '../../../config/pageLocators.js';
 import extractJobDetails from './jobDetailExtractor.js';
 import { ParseJobDetailsSummary } from './jobDetailsSummaryParser.js';
 import { hasNextPaginationPage, goToNextPaginationPage } from './paginationHandler.js';
-import ScrapedJob from '../models/ScrapedJob.js';
+import ScrapedJob from '../../../models/ScrapedJob.js';
+import {getHourlyToken} from '../../../utils/humanUtils.js';
 /**
  * Slowly scroll the job detail card with randomized steps, simulating human reading.
  * @param {import('@playwright/test').Page} page
@@ -150,6 +151,9 @@ export async function processAllJobCardsWithScrolling(page) {
     const processedJobIds = new Set();
     let noNewUnprocessedCardsAfterScrollAttempts = 0;
     const MAX_NO_NEW_UNPROCESSED_CARDS_ATTEMPTS = 5;
+    
+    // create the unique batch id 
+    const batchToken = getHourlyToken();
 
     while (true) {
         const currentJobCardElements = await page.locator(selectors.jobCardLi).elementHandles();
@@ -161,6 +165,17 @@ export async function processAllJobCardsWithScrolling(page) {
             const jobId = await cardElement.getAttribute('data-occludable-job-id');
             if (!jobId || processedJobIds.has(jobId)) continue;
 
+            // check if this job card is already processed. 
+            const expectedUrl = `https://www.linkedin.com/jobs/view/${jobId}`;
+            const exists = await ScrapedJob.exists({ url: expectedUrl });
+            console.log(`JOB ID : ${jobId}\n EXPECTED URL: ${expectedUrl}, EXISITS : ${exists}`);
+
+            if (exists) {
+                console.log(`⏩ Job already in DB: ${expectedUrl}`);
+                processedJobIds.add(jobId);
+                continue;
+            }
+            
             cardsProcessedInThisLoopIteration++;
 
             const box = await cardElement.boundingBox();
@@ -185,12 +200,12 @@ export async function processAllJobCardsWithScrolling(page) {
                 await page.waitForTimeout(1500 + Math.random() * 1500);
                 await scrollJobDetailCard(page);
                 const jobData = await extractJobDetails(page);
-                
+
                 // Parse job data in a summary file 
                 await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
-                
+
                 //  save the scrapedjob 
-                await saveScrapedJob(jobData);
+                await saveScrapedJob( { ...jobData, batchId: batchToken });
 
             } catch (error) {
                 console.log(`❌ Failed to load or scroll job detail for ID ${jobId}:`, error);
@@ -260,7 +275,7 @@ export async function processAllJobCardsWithScrolling(page) {
 
     console.log("🏁 All pagination pages processed. Exiting.");
     await page.context().close(); // or browser.close() depending on where you manage the browser instance
-
+    return batchToken;
 }
 
 

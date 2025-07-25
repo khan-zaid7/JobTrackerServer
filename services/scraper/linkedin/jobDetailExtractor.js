@@ -1,6 +1,6 @@
 // extractors/jobDetailExtract.js
 import { DateTime } from 'luxon'; // if not available, you can use JS Date manually
-import { callDeepSeekAPI } from '../utils/deepseek.js';
+import { callDeepSeekAPI } from '../../../utils/deepseek.js';
 
 /**
  * Master function to extract all job detail fields.
@@ -121,27 +121,49 @@ export async function extractJobDescription(page) {
     if (!contentHandle) {
         console.warn('❌ No job description container found.');
         return {
-                responsibilities: '',
-                qualifications: '',
-                benefits: ''
+            responsibilities: '',
+            qualifications: '',
+            benefits: ''
         };
     }
 
     // Just fetch raw HTML for DeepSeek — skip DOM parsing completely
     const rawHTML = await contentHandle.evaluate(el => el.innerHTML);
 
-    const systemPrompt = `You are a job description parser. You extract and clean specific sections from raw HTML job descriptions.`;
+    const systemPrompt = `
+        You are a specialized HTML-to-JSON extraction model focused on job listings.
+
+        Your purpose is to convert messy or inconsistent job description HTML into accurate, structured data. You do this by understanding the **meaning** of the content — not relying on visual formatting, tags, or headings.
+
+        Your results must be reliable, clean, and complete. Prioritize semantic accuracy and real-world usefulness.
+        `;
+
 
     const userPrompt = `
-Extract the following fields from this raw HTML of a job post. Return only JSON, no explanation.
+        You are analyzing raw HTML taken from a job listing. Your task is to extract structured information about the role, even if the content is unorganized, the headings are missing, or the format is inconsistent.
 
-- responsibilities: Clear description of what the candidate is expected to do.
-- qualifications: Skills, experience, degrees, or traits required.
-- benefits: Perks, salary, healthcare, PTO, etc.
+        Return a valid JSON object with **all three fields**, as shown below:
 
-HTML:
-${rawHTML}
-`;
+        - "responsibilities" (REQUIRED): List the tasks, duties, or deliverables expected of the candidate. This may appear anywhere — at the start, middle, or end — and must be extracted based on meaning, not section titles.
+        - "qualifications" (REQUIRED): Extract any listed or implied skills, experiences, education, or credentials the employer is seeking. Look across the entire HTML. Do not skip this field, even if a heading like “Qualifications” is missing.
+        - "benefits": Include any perks, compensation info, PTO, health coverage, bonuses, or internal culture notes that serve the employee.
+        - "relatedReferences": Extract any email addresses, phone numbers, or LinkedIn profile links mentioned in the HTML.
+
+        Mandatory Requirements:
+        - You **must extract responsibilities and qualifications**. If headings are missing, **infer** based on sentence meaning and phrasing.
+        - If content is embedded in a general paragraph, still extract it.
+        - If one section overlaps with another, divide the content based on logical meaning.
+        - If no benefits are mentioned, return an empty string for "benefits".
+
+        Output Rules:
+        - Only return a well-formed JSON object with the fields: responsibilities, qualifications, and benefits.
+        - Do not return any extra commentary, explanation, or HTML.
+
+        HTML to analyze:
+        ${rawHTML}
+        `;
+
+
 
     try {
         const parsed = await callDeepSeekAPI(systemPrompt, userPrompt);
@@ -162,12 +184,23 @@ ${rawHTML}
 
 async function extractJobUrl(page) {
     try {
-        return page.url(); // Playwright's built-in method to get current page URL
+        const fullUrl = page.url();
+        const urlObj = new URL(fullUrl);
+
+        const jobId = urlObj.searchParams.get('currentJobId');
+
+        if (jobId) {
+            return `https://www.linkedin.com/jobs/view/${jobId}`;
+        }
+
+        console.warn("⚠️ Could not extract jobId from URL:", fullUrl);
+        return null;
     } catch (err) {
         console.error("❌ Failed to extract job URL:", err);
         return null;
     }
 }
+
 
 async function extractCompanyName(page) {
     try {
