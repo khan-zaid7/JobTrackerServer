@@ -2,6 +2,7 @@ import Resume from '../../../models/Resume.js';
 import ScrapedJob from '../../../models/ScrapedJob.js';
 import TailoredResume from '../../../models/TailoredResume.js';
 import { callDeepSeekAPI } from '../../../utils/deepseek.js';
+import { createResumeDocument } from './createResumeDocument.js';
 
 
 const TAILORING_CONFIDENCE_THRESHOLD = 0.6;
@@ -89,16 +90,80 @@ export async function tailorResumeToJob({ userId, resumeId, jobId }) {
       {
         "tailored_resume": "<final_resume_text (plain text, LaTeX, or HTML)>",
         "tailored_sections": {
-          "Summary": [
-            "Software Engineer with 3+ years of experience in scalable backend systems..."
-          ],
-          "Experience": [
-            "• Led migration to microservices, improving system uptime by 30%.",
-            "• Collaborated with PMs to deliver 5+ features using React and Node.js."
-          ],
-          "Projects": [
-            "• Built data visualization dashboard with D3.js used by 300+ internal users."
-          ]
+            "Header": {
+              "fullName": "Full Name Here",
+              "contact": {
+                "email": "email@example.com",
+                "phone": "123-456-7890",
+                "github": "https://github.com/username",
+                "linkedin": null,
+                "website": null
+              }
+            },
+            "Summary": {
+              "paragraphs": [
+                "First summary paragraph...",
+                "Second summary paragraph..."
+              ]
+            },
+            "Education": [
+              {
+                "institution": "Institution Name",
+                "degree": "Degree or Diploma",
+                "dates": {
+                  "start": "Start Date",
+                  "end": "End Date or Expected"
+                },
+                "gpa": "GPA or null",
+                "details": [
+                  "Relevant coursework or honors line 1",
+                  "Additional details line 2"
+                ]
+              }
+            ],
+            "Experience": [
+              {
+                "jobTitle": "Job Title",
+                "company": "Company Name",
+                "dates": {
+                  "start": "Start Date",
+                  "end": "End Date"
+                },
+                "location": null,
+                "responsibilities": [
+                  "Bullet point 1",
+                  "Bullet point 2"
+                ],
+                "achievements": []
+              }
+            ],
+            "Projects": [
+              {
+                "name": "Project Name",
+                "technologies": [
+                  "Tech 1", "Tech 2"
+                ],
+                "details": [
+                  "Project detail bullet 1",
+                  "Project detail bullet 2"
+                ]
+              }
+            ],
+            "Skills": {
+              "programmingLanguages": [],
+              "frontend": [],
+              "backend": [],
+              "databases": [],
+              "cloudDevOps": [],
+              "uiux": []
+            },
+            "Certifications": [
+              {
+                "name": "Certification Name",
+                "issuer": null,
+                "date": null
+              }
+            ]
         },
         "confidence": 0.93,
         "format": "plain_text", // or "latex", "html"
@@ -155,7 +220,11 @@ export async function tailorResumeToJob({ userId, resumeId, jobId }) {
       status: 'success'
     });
 
+    let resumePath = await createResumeDocument(tailoredResume);
+    
+    console.log(`Resume PATH: ${resumePath}`);
     console.log(`[Tailoring Success] Job: ${job.title} | Resume: ${resumeId}`);
+    
     return tailoredResume;
 
   } catch (err) {
