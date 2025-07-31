@@ -17,7 +17,7 @@ const ScrapedJobSchema = new mongoose.Schema({
     linkedin: { type: String, default: null }
   },
   confidenceFactor: { type: Number, default: null },
-  createdBy: { type: mongoose.Schema.Types.ObjectId, required: false },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: false },
   batchId: { type: String, required: false },
   isRelevant: { type: Boolean, default: false },
   is_deleted: { type: Boolean, default: false },

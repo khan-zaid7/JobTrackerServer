@@ -129,7 +129,7 @@ export async function extractJobDescription(page) {
 
     // Just fetch raw HTML for DeepSeek — skip DOM parsing completely
     const rawHTML = await contentHandle.evaluate(el => el.innerHTML);
-
+    console.info('Started fetching descprtion');
     const systemPrompt = `
         You are a specialized HTML-to-JSON extraction model focused on job listings.
 

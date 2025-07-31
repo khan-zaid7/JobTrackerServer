@@ -145,7 +145,7 @@ async function aggressiveJobListScroll(page) {
  * Processes all visible job cards and scrolls to load more as needed.
  * @param {import('@playwright/test').Page} page
  */
-export async function processAllJobCardsWithScrolling(page) {
+export async function processAllJobCardsWithScrolling(page, user) {
     console.log("🚀 Starting job card click + detail scroll loop...");
 
     const processedJobIds = new Set();
@@ -205,7 +205,7 @@ export async function processAllJobCardsWithScrolling(page) {
                 await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
 
                 //  save the scrapedjob 
-                await saveScrapedJob( { ...jobData, batchId: batchToken });
+                await saveScrapedJob( { ...jobData, batchId: batchToken, createdBy: user});
 
             } catch (error) {
                 console.log(`❌ Failed to load or scroll job detail for ID ${jobId}:`, error);
@@ -270,7 +270,7 @@ export async function processAllJobCardsWithScrolling(page) {
         pageNumber++;
         await goToNextPaginationPage(page);
         console.log(`📄 Starting to process page ${pageNumber}...`);
-        await processAllJobCardsWithScrolling(page); // re-use your existing logic
+        await processAllJobCardsWithScrolling(page, user); // re-use your existing logic
     }
 
     console.log("🏁 All pagination pages processed. Exiting.");
