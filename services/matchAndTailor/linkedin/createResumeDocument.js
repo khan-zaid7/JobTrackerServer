@@ -5,8 +5,8 @@ import os from 'os'; // Import the 'os' module
 import { Storage } from '@google-cloud/storage';
 import dotenv from 'dotenv';
 import TailoredResume from '../../../models/TailoredResume.js';
-import User from '../../../models/User.js'; 
-
+import User from '../../../models/User.js';
+import ScrapedJob from '../../../models/ScrapedJob.js';
 
 /**
  * Sanitizes a string to be used as a file path component.
@@ -23,7 +23,7 @@ const sanitizeForPath = (str = '') => {
 
 dotenv.config();
 
-export async function createResumeDocument(tailoredResume, userId, batchId) {
+export async function createResumeDocument(tailoredResume, userId) {
   const storage = new Storage({
     keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
     projectId: 'graphite-earth-467220-a9'
@@ -198,73 +198,75 @@ ${certsTex ? `${certsTex}` : ''}
 
 
   // --- NEW: Temporary file handling ---
-  const baseFileName = `tailored_resume_${tailoredResume._id}`;
-  const texFileName = `${baseFileName}.tex`;
-  const pdfFileName = `${baseFileName}.pdf`;
   let tempDir;
 
   try {
     const user = await User.findById(userId).lean();
-    if (!user) {
-      throw new Error(`User with ID ${userId} not found.`);
+    if (!user) throw new Error(`User with ID ${userId} not found.`);
+
+    // --- ✨ THE FIX: ALL LOGIC IS REORDERED. NO MORE UNDEFINED VARIABLES. ✨ ---
+
+    // STEP 1: Determine the unique filename.
+    let baseFileName;
+    const job = await ScrapedJob.findById(tailoredResume.jobId).lean();
+    if (!job || !job.title || !job.companyName) {
+      baseFileName = `tailored-resume-${tailoredResume._id}`;
+    } else {
+      const baseSlug = `${sanitizeForPath(job.title)}-${sanitizeForPath(job.companyName)}`;
+      let finalSlug = baseSlug;
+      let counter = 1;
+      const bucket = storage.bucket(process.env.BUCKET_NAME);
+      const userFolderName = `${sanitizeForPath(user.name)}-${user._id.toString()}`;
+      const dateFolderName = new Date().toISOString().split('T')[0];
+      while (true) {
+        const potentialPdfName = `${finalSlug}.pdf`;
+        const gcsPath = path.join(userFolderName, dateFolderName, potentialPdfName).replace(/\\/g, '/');
+        const [exists] = await bucket.file(gcsPath).exists();
+        if (!exists) break;
+        finalSlug = `${baseSlug}_${counter}`;
+        counter++;
+      }
+      baseFileName = finalSlug;
     }
-    // 3b. Create the components of the folder path.
-    const userFolderName = `${sanitizeForPath(user.name)}-${user._id.toString()}`;
-    const dateFolderName = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
-    const batchFolderName = batchId;
 
-    // 3c. Assemble the final destination path for GCS.
-    // GCS uses forward slashes, so path.join is perfect for this.
-    // Note: GCS doesn't have real "folders". This path is just part of the object's name.
-    const gcsDestinationPath = path.join(
-      userFolderName,
-      dateFolderName,
-      batchFolderName,
-      pdfFileName
-    ).replace(/\\/g, '/');
+    const pdfFileName = `${baseFileName}.pdf`;
+    const texFileName = `${baseFileName}.tex`;
 
+    // STEP 2: CREATE THE TEMPORARY DIRECTORY.
+    tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), `resume-gen-${tailoredResume._id}-`));
 
-    // 1. Create a unique temporary directory in the OS's temp folder
-    tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), `resume-${tailoredResume._id}-`));
-
+    // STEP 3: CONSTRUCT ALL PATHS. ALL VARIABLES ARE NOW GUARANTEED TO EXIST.
     const texFilePath = path.join(tempDir, texFileName);
     const pdfFilePath = path.join(tempDir, pdfFileName);
 
-    // 2. Write the .tex file to the temporary directory
+    const userFolderName = `${sanitizeForPath(user.name)}-${user._id.toString()}`;
+    const dateFolderName = new Date().toISOString().split('T')[0];
+    const gcsDestinationPath = path.join(userFolderName, dateFolderName, pdfFileName).replace(/\\/g, '/');
+
+    // STEP 4: WRITE, COMPILE, AND UPLOAD.
     await fsPromises.writeFile(texFilePath, latexDoc, 'utf8');
 
-    // 3. Run pdflatex compilation process
     await new Promise((resolve, reject) => {
       const command = 'pdflatex';
       const args = ['-interaction=nonstopmode', '-halt-on-error', `-output-directory=${tempDir}`, texFilePath];
       const child = spawn(command, args, { cwd: tempDir });
-
       child.on('error', (err) => reject(new Error(`Failed to start pdflatex. Is it installed? Error: ${err.message}`)));
-
       child.on('close', async (code) => {
-        if (code === 0) {
-          resolve(); // PDF compilation was successful
-        } else {
+        if (code === 0) resolve();
+        else {
           const logFilePath = path.join(tempDir, `${baseFileName}.log`);
           let logContent = 'Could not read log file.';
-          try {
-            logContent = await fsPromises.readFile(logFilePath, 'utf8');
-          } catch (logError) { /* ignore */ }
+          try { logContent = await fsPromises.readFile(logFilePath, 'utf8'); } catch (logError) { /* ignore */ }
           console.error('LaTeX compilation failed. Full log:\n', logContent);
           reject(new Error(`LaTeX compilation failed with code ${code}.`));
         }
       });
     });
 
-    // 4. Upload the generated PDF from the temporary directory to GCS
-    // 4. ✅ STEP 4: Upload the generated PDF using the NEW nested path.
     console.log(`Uploading PDF to GCS at: ${gcsDestinationPath}`);
-    const publicUrl = await uploadToGCS(storage, pdfFilePath, gcsDestinationPath, process.env.BUCKET_NAME);7
+    const publicUrl = await uploadToGCS(storage, pdfFilePath, gcsDestinationPath, process.env.BUCKET_NAME);
 
-    // 5. Update the database with the public URL
     await TailoredResume.findByIdAndUpdate(tailoredResume._id, { pdfPath: publicUrl });
-
-    // 6. Return the public URL on success
     return publicUrl;
 
   } catch (error) {

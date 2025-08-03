@@ -163,7 +163,7 @@ function validateExperienceHonesty(tailoredResumeJson, originalExperienceYears) 
   console.log('[Validation Pass] Experience duration check passed.');
 }
 
-export async function tailorResumeToJob({ userId, resumeId, jobId, batchId }) {
+export async function tailorResumeToJob({ userId, resumeId, jobId}) {
   try {
     const [resume, job] = await Promise.all([
       Resume.findById(resumeId),
@@ -172,15 +172,6 @@ export async function tailorResumeToJob({ userId, resumeId, jobId, batchId }) {
 
     if (!resume) throw new Error(`Resume not found: ${resumeId}`);
     if (!job) throw new Error(`Job not found: ${jobId}`);
-
-    if (typeof job.confidenceFactor === 'number' && job.confidenceFactor < TAILORING_CONFIDENCE_THRESHOLD) {
-      return await TailoredResume.create({
-        userId, resumeId, jobId,
-        confidence: job.confidenceFactor,
-        status: 'failed',
-        error: `Tailoring skipped due to low confidence (${job.confidenceFactor})`
-      });
-    }
 
     const userPrompt = `
       Here is the job description:
@@ -228,7 +219,7 @@ export async function tailorResumeToJob({ userId, resumeId, jobId, batchId }) {
       status: 'success'
     });
 
-    await createResumeDocument(tailoredResume, userId, batchId);
+    await createResumeDocument(tailoredResume, userId);
     console.log(`[Tailoring Success] Job: ${job.title} | Resume: ${resumeId}`);
     return tailoredResume;
 

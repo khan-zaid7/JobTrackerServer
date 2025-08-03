@@ -16,6 +16,15 @@ export default async function extractJobDetails(page) {
     const description = await extractJobDescription(page);
     const url = await extractJobUrl(page);
     const companyName = await extractCompanyName(page);
+    
+    // ✨ THIS IS THE CRITICAL FIX: THE GUARD CLAUSE ✨
+    // Before returning, we validate that the most important data was actually found.
+    if (!title || !companyName) {
+        // If we are missing a title or company name, this job data is corrupt.
+        // We throw a specific error that the calling function can catch.
+        // This stops us from ever trying to save an invalid job to the database.
+        throw new Error(`Data extraction failed: Missing required fields (title: ${title}, companyName: ${companyName})`);
+    }
 
     return {
         title,

@@ -1,3 +1,4 @@
+import { publishToQueue, NEW_JOB_QUEUE } from '../../queue.js'; 
 import { selectors } from '../../../config/pageLocators.js';
 import extractJobDetails from './jobDetailExtractor.js';
 import { ParseJobDetailsSummary } from './jobDetailsSummaryParser.js';
@@ -151,9 +152,6 @@ export async function processAllJobCardsWithScrolling(page, user) {
     const processedJobIds = new Set();
     let noNewUnprocessedCardsAfterScrollAttempts = 0;
     const MAX_NO_NEW_UNPROCESSED_CARDS_ATTEMPTS = 5;
-    
-    // create the unique batch id 
-    const batchToken = getHourlyToken();
 
     while (true) {
         const currentJobCardElements = await page.locator(selectors.jobCardLi).elementHandles();
@@ -204,8 +202,13 @@ export async function processAllJobCardsWithScrolling(page, user) {
                 // Parse job data in a summary file 
                 await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
 
-                //  save the scrapedjob 
-                await saveScrapedJob( { ...jobData, batchId: batchToken, createdBy: user});
+                // ✨ 4. THE CRITICAL CHANGE: Save, get the ID back, and publish.
+                const newJobId = await saveScrapedJob({ ...jobData, createdBy: user._id });
+
+                if (newJobId) {
+                    // If a new job was actually saved (not a duplicate), publish its ID to the queue.
+                    await publishToQueue(NEW_JOB_QUEUE, { jobId: newJobId.toString() });
+                }
 
             } catch (error) {
                 console.log(`❌ Failed to load or scroll job detail for ID ${jobId}:`, error);
@@ -274,16 +277,18 @@ export async function processAllJobCardsWithScrolling(page, user) {
     }
 
     console.log("🏁 All pagination pages processed. Exiting.");
-    await page.context().close(); // or browser.close() depending on where you manage the browser instance
-    return batchToken;
 }
 
 
+// ✨ 2. MODIFY saveScrapedJob to return the new job's ID or null
 const saveScrapedJob = async (jobData) => {
+    // This method needs to return the saved document or null if it's a duplicate
     const savedJob = await ScrapedJob.saveJobIfNotExists(jobData);
     if (savedJob) {
-        console.log('Job saved:', savedJob._id);
+        console.log('Job saved to DB:', savedJob._id);
+        return savedJob._id; // Return the ID
     } else {
-        console.log('Job was duplicate, skipped saving.');
+        console.log('Job was a duplicate, skipped saving.');
+        return null; // Return null for duplicates
     }
-}
+};

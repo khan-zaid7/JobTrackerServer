@@ -1,5 +1,3 @@
-// main.js
-
 import { createOrLoadSessionContext } from './createOrLoadSessionContext.js';
 import { clickJobsNav } from './navigateToJobs.js';
 import { performJobSearch } from './performJobSearch.js';
@@ -11,7 +9,6 @@ import { processAllJobCardsWithScrolling } from './jobCardProcessor.js';
  * This function handles browser setup, navigation, search, filtering,
  * and orchestrates the modularized phases of data retrieval.
  */
-
 
 // ----------------------------------------------------------------
 
@@ -61,17 +58,15 @@ export async function runJobScraper(query = { search_term, location }, user) {
 
         // --- Phase 2: Exhaustive Scrolling of the Current Job List (UL) ---
         console.log("\n--- Starting Phase 2: Scrolling Job List ---");
-        let batchToken = null; 
         try {
             // Call the modularized scrolling function
-            batchToken = await processAllJobCardsWithScrolling(page, user);
+            await processAllJobCardsWithScrolling(page, user);
             console.log("Finished scrolling the current job list.");
         } catch (error) {
             console.error(`Error during Phase 2 (Scrolling Job List): ${error.message}`);
             throw error; // Re-throw the specific error from the service
         }
-        // --- End of Phase 2 ---
-        return batchToken;
+
 
     } catch (error) {
         console.error(`An unhandled critical error occurred during the scraping process: ${error.message}`);
@@ -81,13 +76,6 @@ export async function runJobScraper(query = { search_term, location }, user) {
             console.log("Browser closed due to error.");
         }
         throw error; // Re-throw to indicate overall failure
-    } finally {
-        // For development, we might keep the browser open.
-        // For production, ensure it closes.
-        // if (browser) {
-        //     await browser.close();
-        //     console.log("Browser closed.");
-        // }
     }
 }
 

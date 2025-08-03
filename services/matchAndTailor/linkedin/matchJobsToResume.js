@@ -1,9 +1,10 @@
 
 import ScrapedJob from '../../../models/ScrapedJob.js';
-import PipelineSession from '../../../models/PipelineSession.js';
 import { callDeepSeekAPI } from '../../../utils/deepseek.js';
-
-// ✅ FIX: Reduced chunk size to prevent AI confusion and ensure reliable responses.
+import { publishToQueue, TAILORING_QUEUE } from '../../queue.js';
+import MatchedPair from '../../../models/MatchedPair.js'
+import User from '../../../models/User.js'
+import Resume from '../../../models/Resume.js'
 const CHUNK_SIZE = 5;
 
 function chunkArray(array, size) {
@@ -78,43 +79,47 @@ const summarizeResume = async (resumeText) => {
 };
 
 
-export const matchJobsToResume = async (batchToken, resume, tags = [], user) => {
-  if (!resume) throw new Error('Resume is required');
-  if (!user) throw new Error('User is required');
-
-  const pipelineSession = await PipelineSession.create({
-    userId: user._id,
-    batchId: batchToken,
-    resumeId: resume._id,
-    tags: tags,
-    status: 'pending',
-    note: 'Starting job matching process...'
-  });
+export const matchJobsToResume = async (jobIds) => {
+  // if (!resume) throw new Error('Resume is required');
+  // if (!user) throw new Error('User is required');
 
   try {
-    // --- Initial Setup (No Changes Here) ---
-    const resumeSummary = await summarizeResume(resume.textContent);
-    const keywordsArr = tags.map(t => t.trim());
-    const scrapedJobs = await ScrapedJob.find(
-      { batchId: batchToken },
-      { _id: 1, title: 1, description: 1, companyName: 1, location: 1 }
-    ).lean();
+    // --- STEP 1: FETCH AND VALIDATE DATA ---
+    const scrapedJobs = await ScrapedJob.find({ _id: { $in: jobIds } }).populate('createdBy');
 
-    console.log(`Found ${scrapedJobs.length} scraped jobs to process.`);
-
-    if (!scrapedJobs.length) {
-      await PipelineSession.findByIdAndUpdate(pipelineSession.id, {
-        status: 'done', jobCount: 0, filteredCount: 0, note: 'No jobs to filter.'
-      });
-      return;
+    if (!scrapedJobs || scrapedJobs.length === 0) {
+      console.log('[matchJobsToResume] No valid jobs found for the provided IDs. Exiting.');
+      return true; // Return success, as there's no work to do.
     }
 
-    await PipelineSession.findByIdAndUpdate(pipelineSession.id, {
-      status: 'filtering',
-      note: `Filtering ${scrapedJobs.length} jobs in progress...`
-    });
+    // Filter out any jobs that might not have a user attached. This is a safety net.
+    const validJobs = scrapedJobs.filter(job => job.createdBy && job.createdBy._id);
 
-    const allFormattedJobs = scrapedJobs.map(j => ({
+    if (validJobs.length === 0) {
+      console.log('[matchJobsToResume] No jobs with a valid user found in this batch. Exiting.');
+      return true;
+    }
+
+    // ✨ THE FIX IS HERE: DECLARE userId FIRST, THEN USE IT.
+    const userId = validJobs[0].createdBy._id;
+    const user = validJobs[0].createdBy;
+
+    // Verify all jobs in the batch belong to the same user.
+    const allJobsBelongToSameUser = validJobs.every(job => job.createdBy._id.equals(userId));
+    if (!allJobsBelongToSameUser) {
+      throw new Error('CRITICAL DATA INTEGRITY ERROR: Job batch contains jobs from multiple users.');
+    }
+
+    const resume = await Resume.findOne({ createdBy: userId, isMaster: true });
+    if (!resume) {
+      throw new Error(`Master resume not found for user ${userId}`);
+    }
+
+    const resumeSummary = await summarizeResume(resume.textContent);
+
+    console.log(`Found ${validJobs.length} valid jobs to process for user ${user.name}.`);
+
+    const allFormattedJobs = validJobs.map(j => ({
       id: j._id.toString(),
       title: j.title,
       description: j.description || '',
@@ -126,7 +131,6 @@ export const matchJobsToResume = async (batchToken, resume, tags = [], user) => 
     let matched = [], borderline = [], rejected = [];
 
     console.log(`Processing jobs in ${jobChunks.length} chunks of up to ${CHUNK_SIZE} jobs each.`);
-
     // --- Start of the NEW Multi-Tiered Logic ---
     for (const [index, chunk] of jobChunks.entries()) {
       let chunkSuccess = false;
@@ -138,7 +142,7 @@ export const matchJobsToResume = async (batchToken, resume, tags = [], user) => 
           console.log(`--- Processing Chunk ${index + 1}/${jobChunks.length}, Attempt ${attempt} ---`);
           const response = await callDeepSeekAPI(
             buildSystemPrompt(),
-            buildUserPrompt({ scrapedJobsArr: chunk, keywordsArr, resumeSummary }),
+            buildUserPrompt({ scrapedJobsArr: chunk, resumeSummary }),
             { model: 'deepseek-reasoner', maxTokens: 32000 }
           );
 
@@ -177,7 +181,7 @@ export const matchJobsToResume = async (batchToken, resume, tags = [], user) => 
             const singleJobChunk = [singleJob];
             const response = await callDeepSeekAPI(
               buildSystemPrompt(),
-              buildUserPrompt({ scrapedJobsArr: singleJobChunk, keywordsArr, resumeSummary }),
+              buildUserPrompt({ scrapedJobsArr: singleJobChunk, resumeSummary }),
               { model: 'deepseek-chat', maxTokens: 2000 } // Can use fewer tokens for one job
             );
 
@@ -195,139 +199,133 @@ export const matchJobsToResume = async (batchToken, resume, tags = [], user) => 
     }
 
     // --- Final Database Update (No Changes Here) ---
-    const result = await processScrapedJobs({ matched, borderline, rejected });
-    console.log('Database update results:', result);
+    // Combine matched and borderline jobs into a single list to be processed.
+    const allMatches = [...matched, ...borderline];
 
-    await PipelineSession.findByIdAndUpdate(pipelineSession.id, {
-      status: 'done',
-      jobCount: allFormattedJobs.length,
-      filteredCount: matched.length,
-      note: `Filtering complete. Found ${matched.length} relevant jobs.`
-    });
+    console.log(`[matchJobsToResume] AI processing complete. Found ${allMatches.length} potential matches to be published.`);
+
+    // Iterate through every job the AI considered a potential match.
+    for (const match of allMatches) {
+      try {
+        // 1. Create the MatchedPair document in the database.
+        // This new document is the "source of truth" that a match was found.
+        const newPair = await MatchedPair.create({
+          userId: userId,
+          resumeId: resume._id,
+          jobId: match.id,
+          matchConfidence: match.confidence,
+          matchReason: match.reason || null, // Also add the reason from the AI
+          tailoringStatus: 'pending' // CORRECTED
+        });
+
+        console.log(`[matchJobsToResume] Created MatchedPair document: ${newPair._id}`);
+
+        // 2. Publish the ID of the newly created pair to the next queue.
+        // This is the signal for the Tailor Worker to begin its job.
+        await publishToQueue(TAILORING_QUEUE, { matchedPairId: newPair._id.toString() });
+
+        console.log(`[matchJobsToResume] 🚀 Published { matchedPairId: ${newPair._id} } to queue: ${TAILORING_QUEUE}`);
+
+      } catch (error) {
+        // This handles cases where a pair might have already been created,
+        // preventing the worker from crashing on a duplicate key error.
+        if (error.code === 11000) {
+          console.warn(`[matchJobsToResume] A matched pair for user ${userId} and job ${match.id} already exists. Skipping.`);
+        } else {
+          console.error(`[matchJobsToResume] Failed to create or publish MatchedPair for job ${match.id}:`, error);
+        }
+      }
+    }
+
+    // The function is now complete and can return.
+    return true; // Return a success indicator to the worker.
+
   } catch (error) {
-    await PipelineSession.findByIdAndUpdate(pipelineSession.id, {
-      status: 'failed',
-      error: error.message
-    });
     console.error('❌ matchJobsToResume pipeline failed:', error);
     throw error;
   }
 };
 
-// This function does not need changes. It correctly processes the data it receives.
-export const processScrapedJobs = async ({ matched = [], borderline = [], rejected = [] }) => {
-  const updates = await Promise.allSettled([
-    ...matched.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
-      isRelevant: true, is_deleted: false, rejectionReason: null, confidenceFactor: job.confidence
-    }, { new: true })),
-
-    ...borderline.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
-      isRelevant: false, is_deleted: false, rejectionReason: job.reason || 'Borderline match: minor mismatch', confidenceFactor: job.confidence
-    }, { new: true })),
-
-    ...rejected.map(job => ScrapedJob.findByIdAndUpdate(job.id, {
-      isRelevant: false, is_deleted: true, rejectionReason: job.rejectionReason || 'Not relevant', confidenceFactor: job.confidence
-    }, { new: true }))
-  ]);
-
-  return {
-    totalProcessed: matched.length + borderline.length + rejected.length,
-    updatedSuccessfully: updates.filter(u => u.status === 'fulfilled').length,
-    failedUpdates: updates.filter(u => u.status === 'rejected').length
-  };
-};
-
 // ✅ FIX: System prompt is updated to expect a summary object, not raw text.
 const buildSystemPrompt = () => {
-  return `
-    🧠 You are an AI job-matching engine that classifies scraped jobs into three categories based on a user's summarized resume and target skills.
+    return `
+    🧠 You are a hyper-logical, ruthless AI gatekeeper. Your mission is to protect the user from wasting time on jobs they are unqualified for. You will classify jobs by following a strict, multi-pass filtering process.
 
     You will receive:
-    - scrapedJobsArr: Array of job objects, each with { id, title, description, companyName, location }
-    - keywordsArr: List of technologies or roles the user is targeting
-    - resumeSummary: A JSON object containing the user's structured resume info: { summary, coreSkills, secondarySkills, yearsOfExperience }
+    - scrapedJobsArr: Array of job objects.
+    - resumeSummary: A JSON object with the user's structured info.
 
-    
-    🎯 Your Task:
-    Evaluate each job in scrapedJobsArr and classify it as one of:
-    1. "matched" – Strongly relevant
-    2. "borderline" – Somewhat relevant, worth showing
-    3. "rejected" – Not a match
+    ---
+    🚨 **MANDATORY PHASE 1: THE KNOCK-OUT FILTER** 🚨
+    ---
+    This is your first and most important task. Before all else, you will analyze every job to see if it has a non-negotiable "Knock-Out Factor."
 
-    🧠 Matching Rules:
+    A job is **INSTANTLY REJECTED** and must be added to the "rejected" list if ANY of the following are true:
 
-    ✅ **Matched Jobs** (high-confidence):
-    - Meets **core skill requirement** (e.g., primary language/framework).
-    - AND has **2 or more total skill/tool matches** from the resume.
-    - Title is a reasonable equivalent.
-    - Experience level is a plausible match (see Experience Analysis).
+    1.  **HARD SKILL MISMATCH:** The job description demands a specific, mandatory technology that is COMPLETELY ABSENT from the user's core or secondary skills.
+        *   **Example:** Job requires "5+ years of OpenGL experience." The resume has zero mention of OpenGL, WebGL, or any other graphics library. -> **REJECT.**
+        *   **Example:** Job requires "Deep experience with VTK." The resume has no VTK. -> **REJECT.**
 
-    ⚠️ **Borderline Jobs** (partial match):
-    - Has a core skill match but is missing another key requirement (e.g., a specific framework).
-    - OR is a strong skills match but the experience level is a stretch (e.g., user has 3 years, job asks for 5+).
-    - OR matches only on secondary skills, but multiple of them.
+    2.  **SPOKEN LANGUAGE MISMATCH:** The job requires fluency in a specific human language (e.g., "French," "German," "Bilingual") that is not indicated by the resume or user profile.
+        *   **Example:** Job description says "Fluency in French is mandatory." -> **REJECT.**
 
-    ❌ **Rejected Jobs** (clear mismatch):
-    - No core skill match.
-    - OR requires a specific niche domain/tool not in the resume (e.g., Guidewire, SAS).
-    - OR experience level is a major mismatch (e.g., user has 1 year, job requires 8+).
+    3.  **NICHE ENTERPRISE TOOL MISMATCH:** The job requires deep, specific experience in a major enterprise platform that the user does not have.
+        *   **Example:** Job requires "Salesforce Certified Administrator" or "5 years of SAP experience." The resume has none. -> **REJECT.**
 
-    💡 **Skill Weighting:**
-    - **Core Skills:** Primary programming languages (Python, Java, etc.), major frameworks (React, Django, etc.), cloud platforms (AWS, Azure).
-    - **Secondary Skills:** Databases (PostgreSQL, etc.), tools (Docker, Git, Jira), libraries.
-    - A job CANNOT be "matched" without at least one Core Skill match.
+    **YOU WILL PERFORM THIS KNOCK-OUT PASS FIRST.**
 
-    💡 **Experience Analysis:**
-    - Extract required years of experience (e.g., "5+ years").
-    - If user's experience is within 2 years of the requirement, it can be "borderline."
-    - If the gap is larger, it's a strong signal for "rejection," unless the role is explicitly junior.
+    ---
+    🎯 **PHASE 2: CLASSIFY THE SURVIVORS** 🎯
+    ---
+    For all jobs that **SURVIVED** the Knock-Out Filter, you will now classify them as "matched" or "borderline" based on the following rules.
 
-    💡 **Conceptual Title Equivalents (apply flexibly):**
-    - Full Stack ≈ Software Engineer ≈ Web Developer
-    - DevOps ≈ SRE ≈ Cloud Engineer
-    - Backend ≈ API Developer ≈ Server Engineer
+    ✅ **MATCHED JOBS (High-Confidence Survivors):**
+    *   The job title is a reasonable conceptual equivalent (e.g., Software Engineer ≈ Full Stack Developer).
+    *   AND it has a strong match with one of the user's **Core Skills** (primary languages, major frameworks).
+    *   AND it has at least two additional matches from **Secondary Skills** (databases, tools, libraries).
+    *   AND the required years of experience is a plausible match (user's experience is within 1-2 years of the requirement).
 
-    🚫 **Hard Rejection Rules:**
-    - Reject jobs requiring "French," "Bilingual," or other languages not in the resume.
-    - Reject jobs requiring niche domain tools (e.g., SAP, ServiceNow) not found in the resume.
+    ⚠️ **BORDERLINE JOBS (Qualified Survivors):**
+    *   It has a core skill match but is missing a secondary requirement (e.g., has Python/Django but is missing the requested "Celery" experience).
+    *   OR it is a strong skills match, but the experience level is a stretch (e.g., user has 2 years, job asks for 5+).
+    *   OR it has no core skill match, but has multiple strong matches on secondary skills, making it potentially relevant.
 
-    📤 **Output Format:**
-    Return a single JSON object.
+    ---
+    📤 **FINAL OUTPUT FORMAT (JSON ONLY)** 📤
+    ---
+    Return a single JSON object. DO NOT add any commentary.
+
     {
       "matched": [
-        { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.95, "matchedSkills": ["Python", "AWS", "SQL"] }
+        { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.95, "matchedSkills": ["Python", "AWS", "SQL"], "reason": "Excellent match on core Python and cloud skills." }
       ],
       "borderline": [
         { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.75, "reason": "Strong match on Node.js/React, but lacks required GraphQL experience.", "matchedSkills": ["Node.js", "React"] }
       ],
       "rejected": [
-        { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.4, "rejectionReason": "Requires 5+ years of Java experience; resume shows JavaScript/Python." }
+        { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.1, "rejectionReason": "HARD REJECTION: Requires 5+ years of mandatory OpenGL experience which is absent." }
       ]
     }
 
-    📌 **Reason Guidelines:**
-    - Be specific, concise, and one line.
-    - For **borderline** jobs, state the trade-off (e.g., "Good match on X, but missing Y").
-    - For **rejected** jobs, state the primary disqualifying factor clearly.
+    ---
+    📌 **REASON GUIDELINES**
+    *   For **rejected** jobs, YOU MUST state the specific Knock-Out Factor (e.g., "HARD REJECTION: Mandatory French language requirement not met.").
+    *   For **borderline** jobs, state the specific trade-off (e.g., "Good match on Java, but missing required Kafka experience.").
+    *   For **matched** jobs, state the primary reason for the strong fit.
 
-    📊 **Confidence Score (0.0 to 1.0):**
-    - **0.9–1.0:** Strong match (meets core skills, title, and experience).
-    - **0.6–0.89:** Borderline (a reasonable trade-off exists).
-    - **< 0.6:** Rejected (clear and significant mismatch).
-
-    Strict Instructions:
-    - DO NOT fabricate or modify job data. Your primary directive is data integrity.
-    - ENSURE every job from the input array is classified once and only once in your response.
-    - ENSURE the 'id' field in your output JSON exactly matches the 'id' from the corresponding input job. This is critical.
-    - NO explanation or commentary outside the JSON object.
-    - Return plain JSON only. Do NOT wrap in markdown like \`json\`.
-  `.trim();
+    ---
+     STRICT INSTRUCTIONS:
+    1.  Execute the Knock-Out Filter first.
+    2.  Classify only the survivors.
+    3.  Ensure every single job from the input is in exactly one of the three output lists.
+    4.  The 'id' field must be an exact copy.
+    5.  Return ONLY the JSON object.
+    `.trim();
 };
 
 // ✅ FIX: User prompt is updated to send the summary object.
-const buildUserPrompt = ({ scrapedJobsArr, keywordsArr, resumeSummary }) => {
+const buildUserPrompt = ({ scrapedJobsArr,  resumeSummary }) => {
   if (!Array.isArray(scrapedJobsArr)) throw new Error('scrapedJobsArr must be an array');
-  if (!Array.isArray(keywordsArr)) throw new Error('keywordsArr must be an array');
   if (typeof resumeSummary !== 'object') throw new Error('resumeSummary must be an object');
 
   return `ScrapedJobs Array:
@@ -342,9 +340,6 @@ ${JSON.stringify(
     null,
     2
   )}
-
-Keywords Array:
-${keywordsArr.join(', ')}
 
 Resume Summary:
 ${JSON.stringify(resumeSummary, null, 2)}`;
