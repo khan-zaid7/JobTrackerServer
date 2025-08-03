@@ -4,7 +4,8 @@ const resumeSchema = new mongoose.Schema({
     originalName: {type: String},
     filePath: {type: String},
     textContent: {type: String},
-    isMaster: {type:Boolean, default:false}
+    isMaster: {type:Boolean, default:false},
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
 }, {timestamps: true});
 
 const Resume =  mongoose.model('Resume', resumeSchema);

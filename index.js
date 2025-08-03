@@ -8,6 +8,7 @@ import jobRoutes from './routes/jobs.js';
 import resumeRoutes from './routes/resume.js';
 import matchRoutes from './routes/match.js';
 import scrapeRoutes from './routes/scrape.js';
+import pipelineRoutes from './routes/pipelineSession.js';
 
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -45,6 +46,7 @@ app.use('/api/resumes', resumeRoutes);
 app.use('/api/match', matchRoutes);
 app.use('/api/match-results', matchResultsRoutes);
 app.use('/api/scrape', scrapeRoutes);
+app.use('/api/pipeline-session/', pipelineRoutes);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use('/tailored-resumes', express.static(path.join(__dirname, '/tailored-resumes')));

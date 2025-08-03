@@ -1,25 +1,25 @@
-import ScrapeSession from '../models/ScrapeSession.js';
+// import ScrapeSession from '../models/ScrapeSession.js';
 import ScrapedJob from '../models/ScrapedJob.js';
 import Resume from '../models/Resume.js';
-import { asyncScrapeAndFilter } from '../services/asyncScrapeAndFilter.js';
 
 export const startScrapeSession = async (req, res) => {
-  const { url, resumeId, tags } = req.body;
+  const { search_term, location, resumeId, tags } = req.body;
 
   if (!resumeId || !tags?.length) return res.status(400).json({ message: 'Missing resumeId or tags' });
 
-  const newSession = await ScrapeSession.create({
-    userId: '680860a5c86b10aabe3bd656',
-    batchId: '', 
-    resumeId,
-    tags,
-    status: 'pending',
-    note: 'Starting scrape...'
-  });
+  // const newSession = await ScrapeSession.create({
+  //   userId: '680860a5c86b10aabe3bd656',
+  //   batchId: '', 
+  //   resumeId,
+  //   tags,
+  //   status: 'pending',
+  //   note: 'Starting scrape...'
+  // });
 
-  asyncScrapeAndFilter(newSession._id, url); // Fire async task
+  // asyncScrapeAndFilter(newSession._id, {search_term, location}); // Fire async task
 
-  res.status(202).json({ sessionId: newSession._id });
+  // res.status(202).json({ sessionId: newSession._id });
+  return '';
 };
 
 export const getScrapeStatus = async (req, res) => {
