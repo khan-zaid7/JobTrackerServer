@@ -4,8 +4,6 @@ import TailoredResume from '../../../models/TailoredResume.js';
 import { callDeepSeekAPI } from '../../../utils/deepseek.js';
 import { createResumeDocument } from './createResumeDocument.js';
 
-const TAILORING_CONFIDENCE_THRESHOLD = 0.6;
-
 // =================================================================
 // 1. PROMPT FOR PASS 1 (ANALYSIS)
 // =================================================================
@@ -219,7 +217,7 @@ export async function tailorResumeToJob({ userId, resumeId, jobId}) {
       status: 'success'
     });
 
-    await createResumeDocument(tailoredResume, userId);
+    await createResumeDocument(tailoredResume, userId, job);
     console.log(`[Tailoring Success] Job: ${job.title} | Resume: ${resumeId}`);
     return tailoredResume;
 

@@ -1,99 +1,96 @@
 import amqp from 'amqplib';
 
-// defining the queue names 
-export const NEW_JOB_QUEUE = 'new-job-queue';
-export const TAILORING_QUEUE = 'tailoring-queue';
+// THE CENTRAL POST OFFICE.
+export const PIPELINE_EXCHANGE = 'pipeline_exchange';
 
-// using .env for configs 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
 
-// using singlton pattern 
 let connection = null;
 let channel = null;
 
-// connect to the mq_server and asset the queues 
-export async function connectToQueue(){
-    // if we are already connected do nothing
-    if (connection){
-        return;
-    }
-
+export async function connectToQueue() {
+    if (connection) return;
     try {
-        console.log(`[RabbitMQ attempting to connect...]`);
+        console.log(`[RabbitMQ] Attempting to connect...`);
         connection = await amqp.connect(RABBITMQ_URL);
-
-        connection.on('error', (err) => {
-            console.error('[RabbitMQ] Connection error', err);
-            // reconnection logic here 
-        })
-
-        connection.on('close', () => {
-            console.warn(`[RabbitMQ] connection closed.`);
-            channel = null;
-            connection = null;
-        })
-
         channel = await connection.createChannel();
-        console.log('[RabbitMQ] connection successfull, channel created!');
 
-        // Asserting queues (if it does not exist then it creates the queue)
-        // durable makes sure that queue survives when RabbitMQ restarts 
-        await channel.assertQueue(NEW_JOB_QUEUE, {durable: true});  
-        await channel.assertQueue(TAILORING_QUEUE, {durable: true});
+        // ✨ THE FIX: USE A 'direct' EXCHANGE FOR PRECISE ROUTING. ✨
+        // This allows us to use routing keys as addresses.
+        await channel.assertExchange(PIPELINE_EXCHANGE, 'topic', { durable: true });
 
-        console.log(`[RabbitMQ] queues ${NEW_JOB_QUEUE}, ${TAILORING_QUEUE} created successfully.`);
-    }
-    catch (error){
-        console.error(`[RabbitMQ] FATAL: could not connect to RabbitMQ.`, error);
+        console.log(`[RabbitMQ] Connection successful. Exchange "${PIPELINE_EXCHANGE}" is ready.`);
+    } catch (error) {
+        console.error(`[RabbitMQ] FATAL: Could not connect to RabbitMQ.`, error);
         process.exit(1);
-    } 
-}
-
-
-/**
- * This function publishes a message to a specific queue.
- * @param {string} queueName - The name of the queue to publish to.
- * @param {object} message - The JSON object to send.
- */
-export async function publishToQueue(queueName, message){
-    if (!channel){
-        throw new Error(`RabbitMQ channel not available.`);
-    }
-
-    try{
-        // send the message as a buffer of stringified JSON object
-        channel.sendToQueue(queueName, Buffer.from(JSON.stringify(message)), {
-            persistent: true
-        });
-    }
-    catch (error) {
-        console.error(`[RabbitMQ] failed to publish message to queue ${queueName}:`, error);
-        //  attempt to recconect 
     }
 }
 
-/**
- * Gracefully closes the RabbitMQ connection.
- * This should be called when a service is shutting down.
- */
-export async function closeQueueConnection(){
-    if (channel){
+// Publish a message to the central exchange with a specific address.
+export async function publishToExchange(routingKey, message) {
+    if (!channel) throw new Error(`RabbitMQ channel not available.`);
+    try {
+        // ✨ THE FIX: Correctly pass the 'persistent' option. ✨
+        channel.publish(PIPELINE_EXCHANGE, routingKey, Buffer.from(JSON.stringify(message)), { persistent: true });
+    } catch (error) {
+        console.error(`[RabbitMQ] Failed to publish message with routing key ${routingKey}:`, error);
+    }
+}
+
+// ✨ THE FIX: THE COMPLETE, CORRECTED CONSUMER FUNCTION. ✨
+// It now correctly accepts and uses the messageHandler callback.
+export async function consumeFromExchange(routingKey, messageHandler) {
+    if (!channel) throw new Error('RabbitMQ channel not available.');
+    
+    // Create an exclusive, auto-deleting queue for this worker instance.
+    // ✨ THE FIX: Corrected typo from autoDetele to autoDelete. ✨
+    const { queue } = await channel.assertQueue('', { exclusive: true, autoDelete: true });
+    
+    // Bind the private queue to the exchange, telling it which address to listen for.
+    await channel.bindQueue(queue, PIPELINE_EXCHANGE, routingKey);
+    
+    console.log(`[Worker] Listening for messages with address "${routingKey}" on private queue "${queue}"`);
+    
+    // Consume from the private queue.
+    channel.consume(queue, messageHandler, { noAck: false });
+}
+
+
+export async function consumeFromCampaignQueue(baseName, campaignId, messageHandler) {
+    if (!channel) throw new Error('RabbitMQ channel not available.');
+
+    // 1. Define a SHARED, DURABLE queue name for the campaign.
+    // e.g., "q.tailor.campaign_123"
+    const queueName = `q.${baseName}.${campaignId}`;
+    // 2. Create the shared queue.
+    await channel.assertQueue(queueName, { durable: true });
+    
+    // 3. Define the routing key pattern for this queue.
+    // e.g., "tailor.campaign_123"
+    const routingKey = `${baseName}.${campaignId}`;
+    
+    // 4. Bind the shared queue to the exchange with the routing key.
+    await channel.bindQueue(queueName, PIPELINE_EXCHANGE, routingKey);
+    
+    console.log(`[Worker] Listening on SHARED queue "${queueName}" for messages with address "${routingKey}"`);
+    
+    // 5. All workers consume from the SAME shared queue.
+    channel.consume(queueName, messageHandler, { noAck: false });
+}
+
+// Unchanged but necessary functions.
+export function getChannel() {
+    return channel;
+}
+
+export async function closeQueueConnection() {
+    if (channel) {
         await channel.close();
         channel = null;
     }
-
-    if (connection){
+    if (connection) {
         await connection.close();
         connection = null;
     }
-
     console.log('[RabbitMQ] Connection closed gracefully.');
-}
-
-/**
- * Provides direct access to the channel for more advanced consumer logic.
- * @returns {amqp.Channel | null} The amqplib channel object.
- */
-export function getChannel() {
-    return channel;
 }

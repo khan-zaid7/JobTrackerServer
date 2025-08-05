@@ -23,8 +23,8 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // These tasks define what the worker should do. They include the userId.
 const SCRAPING_TASKS = [
-    { userId: '688ea3ec9e344b03a7b8d909', query: { search_term: 'Software Engineer', location: 'Canada' } },
-    { userId: '688ea3ec9e344b03a7b8d909', query: { search_term: 'Data Analyst', location: 'Canada' } },
+    { userId: '689134de83f1bfe793b3f6f2', query: { search_term: 'Software Developer', location: 'Canada' } },
+    { userId: '689134de83f1bfe793b3f6f2', query: { search_term: 'Data Analyst', location: 'Canada' } },
 ];
 
 const startScraperWorker = async () => {
@@ -44,8 +44,9 @@ const startScraperWorker = async () => {
                     continue;
                 }
                 
+                const campaignId = process.env.CAMPAIGN_ID;
                 // The worker calls your existing, refactored runJobScraper.
-                await runJobScraper(task.query, user);
+                await runJobScraper(task.query, user, campaignId);
                 
                 console.log(`--- [Scraper Worker] Successfully completed task: "${task.query.search_term}" ---`);
 

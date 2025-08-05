@@ -1,129 +1,118 @@
 import mongoose from 'mongoose';
+import User from '../../../models/User.js';
+import Resume from '../../../models/Resume.js';
+import ScrapedJob from '../../../models/ScrapedJob.js';
+import TailoredResume from '../../../models/TailoredResume.js';
 import dotenv from 'dotenv';
 import {
     connectToQueue,
     getChannel,
     closeQueueConnection,
-    TAILORING_QUEUE
-} from '../../queue.js'; // Assuming queue.js is in the same directory
+    consumeFromExchange,
+    consumeFromCampaignQueue
+} from '../../queue.js';
 
-// This is the sophisticated, pre-existing AI logic for tailoring.
-// We are assuming the path is correct.
-import { tailorResumeToJob } from './tailorResumeToJob.js'; 
-
-// Import the model needed to look up the job details
+import { tailorResumeToJob } from './tailorResumeToJob.js';
 import MatchedPair from '../../../models/MatchedPair.js';
 
 dotenv.config();
 
-// --- Main Worker Logic ---
+// ✨ THE FIX: GET THE CAMPAIGN ID FROM THE ENVIRONMENT ✨
+const CAMPAIGN_ID = process.env.CAMPAIGN_ID;
 
 const connectDB = async () => {
-    // Standard boilerplate for connecting to MongoDB.
     if (mongoose.connection.readyState >= 1) return;
     try {
         await mongoose.connect(process.env.MONGO_URI);
-        console.log("✅ MongoDB connected for Tailor Worker.");
+        console.log(`[Tailor-${CAMPAIGN_ID}] ✅ MongoDB connected.`);
     } catch (err) {
-        console.error("❌ DB connection failed:", err.message);
+        console.error(`[Tailor-${CAMPAIGN_ID}] ❌ DB connection failed:`, err.message);
         process.exit(1);
     }
 };
 
 const startTailorWorker = async () => {
+    if (!CAMPAIGN_ID) {
+        throw new Error("FATAL: CAMPAIGN_ID environment variable is not set. This worker has no mission.");
+    }
+
     await connectDB();
     await connectToQueue();
 
     const channel = getChannel();
     if (!channel) {
-        console.error("FATAL: Failed to get RabbitMQ channel. Exiting.");
+        console.error(`[Tailor-${CAMPAIGN_ID}] ❌ Failed to get RabbitMQ channel. Exiting.`);
         process.exit(1);
     }
-
-    // Set prefetch to 1.
-    // This is CRITICAL for this worker. It ensures that each worker instance
-    // will only take ONE message from the queue at a time. Because tailoring is
-    // a slow, resource-intensive task, this allows us to scale horizontally
-    // by running many instances, with each one focused on a single job.
+    
+    // This is a slow worker. It should only process ONE job at a time.
     channel.prefetch(1);
 
-    console.log(`[Tailor Worker] Waiting for messages on queue: "${TAILORING_QUEUE}".`);
+    // ✨ THE FIX: USE THE DYNAMIC ROUTING KEY ✨
+    const routingKey = `tailor.${CAMPAIGN_ID}`;
 
-    channel.consume(TAILORING_QUEUE, async (msg) => {
-        if (msg === null) {
-            return;
-        }
+    await consumeFromCampaignQueue('tailor', CAMPAIGN_ID, async (msg) => {
+        if (!msg) return;
 
         const content = JSON.parse(msg.content.toString());
-        const { matchedPairId } = content;
+        // We still check for campaignId consistency, even though the routing should guarantee it.
+        const { matchedPairId, campaignId: msgCampaignId } = content;
 
-        if (!matchedPairId) {
-            console.error('[Tailor Worker] Received message without a matchedPairId. Discarding.', content);
-            channel.ack(msg); // Acknowledge to remove the malformed message
+        if (!matchedPairId || msgCampaignId !== CAMPAIGN_ID) {
+            console.error(`[Tailor-${CAMPAIGN_ID}] ❌ Invalid message received. Discarding.`, content);
+            channel.nack(msg, false, false); // Discard malformed messages
             return;
         }
-        
-        console.log(`[Tailor Worker] Received new tailoring job. MatchedPair ID: ${matchedPairId}`);
-        
+
+        console.log(`[Tailor-${CAMPAIGN_ID}] ✂️ Received tailoring job. MatchedPair ID: ${matchedPairId}`);
+
         let pair = null;
         try {
-            // 1. Fetch the MatchedPair document to get all the necessary IDs.
             pair = await MatchedPair.findById(matchedPairId);
+            if (!pair) throw new Error(`MatchedPair ID ${matchedPairId} not found.`);
 
-            if (!pair) {
-                throw new Error(`MatchedPair with ID ${matchedPairId} not found in the database.`);
-            }
-
-            // 2. Update the status to 'processing' to prevent re-work and provide visibility.
             pair.tailoringStatus = 'processing';
             await pair.save();
 
-            // 3. Delegate the slow, intensive work to the existing tailoring service function.
-            // This function contains the two-pass AI logic.
             const tailoredResume = await tailorResumeToJob({
                 userId: pair.userId,
                 resumeId: pair.resumeId,
                 jobId: pair.jobId,
             });
 
-            // 4. If successful, update the status and link the final resume.
-            pair.tailoringStatus = 'completed';
-            pair.tailoredResumeId = tailoredResume._id; // Link to the final output
-            await pair.save();
-
-            console.log(`[Tailor Worker] ✅ Successfully completed tailoring for MatchedPair ID: ${matchedPairId}`);
-
-        } catch (error) {
-            console.error(`[Tailor Worker] ❌ FAILED to process tailoring for MatchedPair ID: ${matchedPairId}.`, error);
-            
-            // If an error occurs, update the status to 'failed' for tracking.
-            if (pair) {
-                pair.tailoringStatus = 'failed';
-                // You could add an error message field to the schema to store `error.message`.
-                await pair.save();
+            if (!tailoredResume || !tailoredResume._id) {
+                throw new Error(`Tailoring process failed to return a valid resume document.`);
             }
 
-        } finally {
-            // 5. CRITICAL: Acknowledge the message.
-            // Whether it succeeded or failed, we acknowledge the message to remove it
-            // from the queue. This prevents a "poison pill" message (a message that
-            // always fails) from being re-queued and blocking the system.
-            channel.ack(msg);
-            console.log(`[Tailor Worker] Acknowledged message for MatchedPair ID: ${matchedPairId}`);
+            pair.tailoringStatus = 'completed';
+            pair.tailoredResumeId = tailoredResume._id;
+            await pair.save();
+
+            console.log(`[Tailor-${CAMPAIGN_ID}] ✅ Tailoring complete for MatchedPair ID: ${matchedPairId}`);
+            channel.ack(msg); // Acknowledge on success
+
+        } catch (error) {
+            console.error(`[Tailor-${CAMPAIGN_ID}] ❌ FAILED job ${matchedPairId}:`, error);
+
+            if (pair) {
+                pair.tailoringStatus = 'failed';
+                // You could add: pair.tailoringError = error.message;
+                await pair.save();
+            }
+            // Reject the message (don't requeue) to prevent poison pills.
+            channel.nack(msg, false, false);
         }
-    }, {
-        noAck: false
     });
 };
 
 startTailorWorker().catch(err => {
-    console.error("A critical unhandled error occurred in the tailor worker:", err);
+    console.error(`[Tailor-${CAMPAIGN_ID || 'NO_CAMPAIGN'}] 🔥 Fatal startup error:`, err);
     closeQueueConnection();
     process.exit(1);
 });
 
 process.on('SIGINT', async () => {
-    console.log('SIGINT received. Shutting down tailor worker gracefully.');
+    console.log(`[Tailor-${CAMPAIGN_ID || 'NO_CAMPAIGN'}] 🛑 Gracefully shutting down...`);
     await closeQueueConnection();
     process.exit(0);
 });

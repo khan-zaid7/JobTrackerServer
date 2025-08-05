@@ -1,4 +1,4 @@
-import { publishToQueue, NEW_JOB_QUEUE } from '../../queue.js'; 
+import { publishToExchange } from '../../queue.js';
 import { selectors } from '../../../config/pageLocators.js';
 import extractJobDetails from './jobDetailExtractor.js';
 import { ParseJobDetailsSummary } from './jobDetailsSummaryParser.js';
@@ -146,7 +146,10 @@ async function aggressiveJobListScroll(page) {
  * Processes all visible job cards and scrolls to load more as needed.
  * @param {import('@playwright/test').Page} page
  */
-export async function processAllJobCardsWithScrolling(page, user) {
+export async function processAllJobCardsWithScrolling(page, user, campaignId) {
+    if (!campaignId) {
+        throw new Error("FATAL: campaignId is missing. Scraper cannot publish to the correct address.");
+    }
     console.log("🚀 Starting job card click + detail scroll loop...");
 
     const processedJobIds = new Set();
@@ -202,14 +205,17 @@ export async function processAllJobCardsWithScrolling(page, user) {
                 // Parse job data in a summary file 
                 await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
 
-                // ✨ 4. THE CRITICAL CHANGE: Save, get the ID back, and publish.
-                const newJobId = await saveScrapedJob({ ...jobData, createdBy: user._id });
+                // No change to saving the job
+                const savedJob = await ScrapedJob.saveJobIfNotExists({ ...jobData, createdBy: user._id });
 
-                if (newJobId) {
-                    // If a new job was actually saved (not a duplicate), publish its ID to the queue.
-                    await publishToQueue(NEW_JOB_QUEUE, { jobId: newJobId.toString() });
+                if (savedJob) {
+                    const newJobId = savedJob._id.toString();
+                    const routingKey = `match.${campaignId}`; // e.g., "match.campaign_123"
+                    const message = { jobId: newJobId, campaignId: campaignId };
+
+                    await publishToExchange(routingKey, message);
+                    console.log(`🚀 Published { jobId: ${newJobId} } with address "${routingKey}"`);
                 }
-
             } catch (error) {
                 console.log(`❌ Failed to load or scroll job detail for ID ${jobId}:`, error);
             }
@@ -273,7 +279,7 @@ export async function processAllJobCardsWithScrolling(page, user) {
         pageNumber++;
         await goToNextPaginationPage(page);
         console.log(`📄 Starting to process page ${pageNumber}...`);
-        await processAllJobCardsWithScrolling(page, user); // re-use your existing logic
+        await processAllJobCardsWithScrolling(page, user, campaignId); // re-use your existing logic
     }
 
     console.log("🏁 All pagination pages processed. Exiting.");
@@ -286,7 +292,7 @@ const saveScrapedJob = async (jobData) => {
     const savedJob = await ScrapedJob.saveJobIfNotExists(jobData);
     if (savedJob) {
         console.log('Job saved to DB:', savedJob._id);
-        return savedJob._id; // Return the ID
+        return savedJob; // Return the ID
     } else {
         console.log('Job was a duplicate, skipped saving.');
         return null; // Return null for duplicates

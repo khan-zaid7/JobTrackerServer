@@ -1,10 +1,10 @@
 
 import ScrapedJob from '../../../models/ScrapedJob.js';
 import { callDeepSeekAPI } from '../../../utils/deepseek.js';
-import { publishToQueue, TAILORING_QUEUE } from '../../queue.js';
+import { publishToExchange} from '../../queue.js';
 import MatchedPair from '../../../models/MatchedPair.js'
-import User from '../../../models/User.js'
 import Resume from '../../../models/Resume.js'
+import User from '../../../models/User.js';
 const CHUNK_SIZE = 5;
 
 function chunkArray(array, size) {
@@ -79,12 +79,26 @@ const summarizeResume = async (resumeText) => {
 };
 
 
-export const matchJobsToResume = async (jobIds) => {
+export const matchJobsToResume = async (jobsToProcess) => {
   // if (!resume) throw new Error('Resume is required');
   // if (!user) throw new Error('User is required');
 
   try {
-    // --- STEP 1: FETCH AND VALIDATE DATA ---
+    if (!jobsToProcess || jobsToProcess.length === 0) {
+      console.log('[Matcher Service] Received an empty batch. Nothing to do.');
+      return true;
+    }
+
+    // --- STEP 1: EXTRACT MISSION-CRITICAL DATA ---
+    // We get the campaignId from the FIRST job in the batch.
+    const campaignId = jobsToProcess[0].campaignId;
+    if (!campaignId) {
+      throw new Error("FATAL: campaignId is missing from the job payload.");
+    }
+    const jobIds = jobsToProcess.map(job => job.jobId);
+    console.log(`[Matcher Service] Starting batch for campaign: ${campaignId}`);
+
+    // --- STEP 2: FETCH AND VALIDATE DATA ---
     const scrapedJobs = await ScrapedJob.find({ _id: { $in: jobIds } }).populate('createdBy');
 
     if (!scrapedJobs || scrapedJobs.length === 0) {
@@ -221,10 +235,14 @@ export const matchJobsToResume = async (jobIds) => {
         console.log(`[matchJobsToResume] Created MatchedPair document: ${newPair._id}`);
 
         // 2. Publish the ID of the newly created pair to the next queue.
-        // This is the signal for the Tailor Worker to begin its job.
-        await publishToQueue(TAILORING_QUEUE, { matchedPairId: newPair._id.toString() });
+        const routingKey = `tailor.${campaignId}`;
+        const message = {
+          matchedPairId: newPair._id.toString(),
+          campaignId: campaignId // Pass the campaign context forward
+        };
 
-        console.log(`[matchJobsToResume] 🚀 Published { matchedPairId: ${newPair._id} } to queue: ${TAILORING_QUEUE}`);
+        await publishToExchange(routingKey, message);
+        console.log(`[Matcher Service] 🚀 Published MatchedPair ${newPair._id} with address "${routingKey}"`);
 
       } catch (error) {
         // This handles cases where a pair might have already been created,
@@ -248,47 +266,59 @@ export const matchJobsToResume = async (jobIds) => {
 
 // ✅ FIX: System prompt is updated to expect a summary object, not raw text.
 const buildSystemPrompt = () => {
-    return `
-    🧠 You are a hyper-logical, ruthless AI gatekeeper. Your mission is to protect the user from wasting time on jobs they are unqualified for. You will classify jobs by following a strict, multi-pass filtering process.
+  return `
+    🧠 You are a world-class executive recruiter and a ruthless career strategist. Your mission is to determine if a job opportunity is a **LOGICAL AND QUALIFIED** career move for a specific candidate. You will execute a multi-phase filtering process.
 
     You will receive:
-    - scrapedJobsArr: Array of job objects.
-    - resumeSummary: A JSON object with the user's structured info.
+    - scrapedJobsArr: An array of job objects.
+    - resumeSummary: A JSON object containing the candidate's 'professionalIdentity', 'coreSkills', and 'secondarySkills'.
 
     ---
-    🚨 **MANDATORY PHASE 1: THE KNOCK-OUT FILTER** 🚨
+    🚨 **PHASE 1: THE STRATEGIC FIT (DOMAIN) FILTER** 🚨
     ---
-    This is your first and most important task. Before all else, you will analyze every job to see if it has a non-negotiable "Knock-Out Factor."
+    This is your first, most critical gate. You will analyze the fundamental nature of the job and the candidate.
 
-    A job is **INSTANTLY REJECTED** and must be added to the "rejected" list if ANY of the following are true:
+    **STEP 1: IDENTIFY THE JOB'S DOMAIN.**
+    Is the core function "Software Engineering," "Sales," "Teaching," "Nursing," etc.?
 
-    1.  **HARD SKILL MISMATCH:** The job description demands a specific, mandatory technology that is COMPLETELY ABSENT from the user's core or secondary skills.
-        *   **Example:** Job requires "5+ years of OpenGL experience." The resume has zero mention of OpenGL, WebGL, or any other graphics library. -> **REJECT.**
-        *   **Example:** Job requires "Deep experience with VTK." The resume has no VTK. -> **REJECT.**
+    **STEP 2: COMPARE DOMAINS.**
+    Compare the job's domain to the candidate's \`professionalIdentity\`.
 
-    2.  **SPOKEN LANGUAGE MISMATCH:** The job requires fluency in a specific human language (e.g., "French," "German," "Bilingual") that is not indicated by the resume or user profile.
-        *   **Example:** Job description says "Fluency in French is mandatory." -> **REJECT.**
-
-    3.  **NICHE ENTERPRISE TOOL MISMATCH:** The job requires deep, specific experience in a major enterprise platform that the user does not have.
-        *   **Example:** Job requires "Salesforce Certified Administrator" or "5 years of SAP experience." The resume has none. -> **REJECT.**
-
-    **YOU WILL PERFORM THIS KNOCK-OUT PASS FIRST.**
+    **STEP 3: MAKE THE STRATEGIC REJECTION.**
+    A job is **INSTANTLY REJECTED** if it is an **ILLOGICAL DOMAIN MISMATCH.**
+    *   **Example:** Candidate is a "Process Automation Engineer." Job is an "English Teacher in China." -> REJECT. Reason: "Domain Mismatch: Non-technical teaching role is not aligned with an engineering career path."
+    *   **Example:** Candidate is a "Sales Executive." Job is a "Senior C++ Developer." -> REJECT. Reason: "Domain Mismatch: Deep technical role is not aligned with a sales career path."
+    
+    **YOU WILL PERFORM THIS CHECK FIRST. ALL JOBS THAT FAIL THIS CHECK GO DIRECTLY INTO THE "rejected" LIST.**
 
     ---
-    🎯 **PHASE 2: CLASSIFY THE SURVIVORS** 🎯
+    🎯 **PHASE 2: THE TACTICAL FIT (SKILLS) FILTER** 🎯
     ---
-    For all jobs that **SURVIVED** the Knock-Out Filter, you will now classify them as "matched" or "borderline" based on the following rules.
+    For all jobs that **SURVIVED** the strategic domain filter, you will now perform a detailed technical qualification analysis.
 
-    ✅ **MATCHED JOBS (High-Confidence Survivors):**
-    *   The job title is a reasonable conceptual equivalent (e.g., Software Engineer ≈ Full Stack Developer).
-    *   AND it has a strong match with one of the user's **Core Skills** (primary languages, major frameworks).
-    *   AND it has at least two additional matches from **Secondary Skills** (databases, tools, libraries).
-    *   AND the required years of experience is a plausible match (user's experience is within 1-2 years of the requirement).
+    **STEP 1: IDENTIFY HARD REQUIREMENTS & KNOCK-OUT FACTORS.**
+    Analyze the job description for non-negotiable requirements.
+    *   **Hard Skill Requirement:** A specific, mandatory technology (e.g., "5+ years of OpenGL," "expert in SAP").
+    *   **Spoken Language Requirement:** Mandatory fluency in a human language (e.g., "fluent French").
 
-    ⚠️ **BORDERLINE JOBS (Qualified Survivors):**
-    *   It has a core skill match but is missing a secondary requirement (e.g., has Python/Django but is missing the requested "Celery" experience).
-    *   OR it is a strong skills match, but the experience level is a stretch (e.g., user has 2 years, job asks for 5+).
-    *   OR it has no core skill match, but has multiple strong matches on secondary skills, making it potentially relevant.
+    **STEP 2: MAKE THE TACTICAL REJECTION.**
+    A job that survived Phase 1 is **STILL REJECTED** if it fails this check.
+    *   **Example:** Candidate is a "Software Engineer." Job is "Senior Graphics Engineer." It passed the domain filter. BUT, the job requires "OpenGL," which is absent from the resume. -> REJECT. Reason: "Hard Skill Mismatch: Mandatory requirement for OpenGL is absent."
+
+    ---
+    ⚙️ **PHASE 3: CLASSIFY THE FINAL SURVIVORS** ⚙️
+    ---
+    For the elite few jobs that have passed **BOTH** Phase 1 and Phase 2, you will now classify them as "matched" or "borderline."
+
+    ✅ **MATCHED (High-Confidence Fit):**
+    *   The candidate's \`coreSkills\` are a STRONG MATCH for the job's primary technical requirements.
+    *   The candidate has significant overlap with secondary requirements.
+    *   The experience level is a plausible fit.
+
+    ⚠️ **BORDERLINE (Plausible "Stretch" Fit):**
+    *   The candidate has strong transferable skills (e.g., has AWS for an Azure job).
+    *   OR the experience level is a stretch, but the core skills are a perfect match.
+
 
     ---
     📤 **FINAL OUTPUT FORMAT (JSON ONLY)** 📤
@@ -303,46 +333,27 @@ const buildSystemPrompt = () => {
         { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.75, "reason": "Strong match on Node.js/React, but lacks required GraphQL experience.", "matchedSkills": ["Node.js", "React"] }
       ],
       "rejected": [
-        { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.1, "rejectionReason": "HARD REJECTION: Requires 5+ years of mandatory OpenGL experience which is absent." }
+        { "id": "job_id_1", "confidence": 0.0, "rejectionReason": "Domain Mismatch: Teaching role is not aligned with an engineering career path." },
+        { "id": "job_id_2", "confidence": 0.1, "rejectionReason": "Hard Skill Mismatch: Mandatory requirement for OpenGL is absent." }
       ]
     }
-
-    ---
-    📌 **REASON GUIDELINES**
-    *   For **rejected** jobs, YOU MUST state the specific Knock-Out Factor (e.g., "HARD REJECTION: Mandatory French language requirement not met.").
-    *   For **borderline** jobs, state the specific trade-off (e.g., "Good match on Java, but missing required Kafka experience.").
-    *   For **matched** jobs, state the primary reason for the strong fit.
-
-    ---
-     STRICT INSTRUCTIONS:
-    1.  Execute the Knock-Out Filter first.
-    2.  Classify only the survivors.
-    3.  Ensure every single job from the input is in exactly one of the three output lists.
-    4.  The 'id' field must be an exact copy.
-    5.  Return ONLY the JSON object.
     `.trim();
 };
 
 // ✅ FIX: User prompt is updated to send the summary object.
-const buildUserPrompt = ({ scrapedJobsArr,  resumeSummary }) => {
-  if (!Array.isArray(scrapedJobsArr)) throw new Error('scrapedJobsArr must be an array');
-  if (typeof resumeSummary !== 'object') throw new Error('resumeSummary must be an object');
+const buildUserPrompt = ({ scrapedJobsArr, resumeSummary }) => {
+  return `
+        Resume Summary:
+        ${JSON.stringify(resumeSummary, null, 2)}
 
-  return `ScrapedJobs Array:
-${JSON.stringify(
-    scrapedJobsArr.map(job => ({
-      id: job.id,
-      title: job.title || '',
-      description: flattenDescription(job.description),
-      companyName: job.companyName,
-      location: job.location
-    })),
-    null,
-    2
-  )}
-
-Resume Summary:
-${JSON.stringify(resumeSummary, null, 2)}`;
+        Scraped Jobs Array:
+        ${JSON.stringify(scrapedJobsArr.map(job => ({
+    id: job.id,
+    title: job.title || '',
+    description: flattenDescription(job.description),
+    companyName: job.companyName,
+  })), null, 2)}
+    `;
 };
 
 // This function does not need changes.
