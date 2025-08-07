@@ -8,7 +8,8 @@
     "start:matcher": "node services/matchAndTailor/linkedin/matcher-worker.js",
     "start:tailor": "node services/matchAndTailor/linkedin/tailor-worker.js",
     "seed": "node seed.js",
-    "start": "concurrently --kill-others-on-fail -n \"SCRAPER,MATCHER,TAILOR\" \"npm:start:scraper\" \"npm:start:matcher\" \"npm:start:tailor\""
+    "start": "concurrently --kill-others-on-fail -n \"SCRAPER,MATCHER,TAILOR\" \"npm:start:scraper\" \"npm:start:matcher\" \"npm:start:tailor\"",
+    "dev": "node index.js"
   },
   "keywords": [],
   "author": "",
@@ -27,6 +28,7 @@
     "lodash": "^4.17.21",
     "luxon": "^3.7.1",
     "mammoth": "^1.9.0",
+    "minimist": "^1.2.8",
     "mongoose": "^8.13.2",
     "multer": "^1.4.5-lts.2",
     "node-latex": "^3.1.0",

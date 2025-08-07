@@ -12,7 +12,7 @@ import { processAllJobCardsWithScrolling } from './jobCardProcessor.js';
 
 // ----------------------------------------------------------------
 
-export async function runJobScraper(query = { search_term, location }, user) {
+export async function runJobScraper(query = { search_term, location }, user, campaignId) {
 
     if (!query) throw new Error('Search Parameters are required!');
     
@@ -60,7 +60,7 @@ export async function runJobScraper(query = { search_term, location }, user) {
         console.log("\n--- Starting Phase 2: Scrolling Job List ---");
         try {
             // Call the modularized scrolling function
-            await processAllJobCardsWithScrolling(page, user);
+            await processAllJobCardsWithScrolling(page, user, campaignId);
             console.log("Finished scrolling the current job list.");
         } catch (error) {
             console.error(`Error during Phase 2 (Scrolling Job List): ${error.message}`);

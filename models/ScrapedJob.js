@@ -22,6 +22,7 @@ const ScrapedJobSchema = new mongoose.Schema({
   isRelevant: { type: Boolean, default: false },
   is_deleted: { type: Boolean, default: false },
   rejectionReason: { type: String, default: null },
+  campaignId: { type: String, required: true, index: true },
 
   // ✅ New field to link to Resume
   resumeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Resume', default: null }
@@ -35,6 +36,7 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     title,
     url,
     companyName,
+    campaignId,
     location = null,
     postedAt = null,
     description = {},
@@ -81,6 +83,7 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     isRelevant,
     is_deleted,
     rejectionReason,
+    campaignId,
     resumeId // ✅ Store resume reference
   });
 

@@ -23,7 +23,7 @@ const sanitizeForPath = (str = '') => {
 
 dotenv.config();
 
-export async function createResumeDocument(tailoredResume, userId) {
+export async function createResumeDocument(tailoredResume, userId, job) {
   const storage = new Storage({
     keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
     projectId: 'graphite-earth-467220-a9'
@@ -208,7 +208,6 @@ ${certsTex ? `${certsTex}` : ''}
 
     // STEP 1: Determine the unique filename.
     let baseFileName;
-    const job = await ScrapedJob.findById(tailoredResume.jobId).lean();
     if (!job || !job.title || !job.companyName) {
       baseFileName = `tailored-resume-${tailoredResume._id}`;
     } else {
