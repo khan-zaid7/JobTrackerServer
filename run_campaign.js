@@ -1,45 +1,93 @@
-import minimist from 'minimist'; 
-import {spawn} from 'child_process';
-import {v4 as uuidv4} from 'uuid';
+import { spawn } from 'child_process';
+import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
+import Campaign from './models/Campaign.js';
+
+
 dotenv.config();
+const campaignProcesses = {};
 
-const argv = minimist(process.argv.slice(2), {
-   string: ['_'],
-   default: {matches: 1, tailors: 1, scrapers: 1} 
-});
-
-const targetRole = argv._[0];
-if (!targetRole){
-    console.error(`Error: You must provide a role. Example: node run_campain.js  "Devops Engineer" --matches=10`);
-    process.exit(1);
-}
-
-const campaignId = uuidv4();
-
-console.log(`---Launching New Compaign---\nTarget Role: ${targetRole}\nCampaign ID: ${campaignId}`);
-console.log(`MATCHERS: ${argv.matchers}, TAILORS: ${argv.tailors}, SCRAPERS: ${argv.scrapers}`);
-console.log(`-----------------------------`);
-
-const envBase = {
-    ...process.env, 
-    CAMPAIGN_ID: campaignId, 
-    CAMPAIGN_TARGET: targetRole
-};
-
-async function spawnWorkers(path, roleName, count){
-    for (let i=0; i<count; i++){
+function spawnWorkers(path, roleName, count, envBase, campaignId) {
+    for (let i = 0; i < count; i++) {
         const env = {
-            ...envBase, 
-            WORKER_ROLE: roleName, 
+            ...envBase,
+            WORKER_ROLE: roleName,
             WORKER_INSTANCE_ID: String(i)
         };
-        const child = spawn('node', [path], {env, stdio: 'inherit'});
-        child.on('error', (err) => console.error(`Error spawing ${roleName} #${i}:`, err));
+        const child = spawn('node', [path], { env, stdio: 'inherit' });
+
+        if (!campaignProcesses[campaignId]) {
+            campaignProcesses[campaignId] = [];
+        }
+
+        campaignProcesses[campaignId].push(child);
+        child.on('close', (code) => {
+            console.log(`${roleName} #${i} for campaign ${campaignId} exited with code ${code}.`);
+
+            // Remove the dead soldier from the roster.
+            if (campaignProcesses[campaignId]) {
+                campaignProcesses[campaignId] = campaignProcesses[campaignId].filter(p => p.pid !== child.pid);
+
+                // If this was the last soldier, remove the entire campaign entry.
+                if (campaignProcesses[campaignId].length === 0) {
+                    console.log(`[SYSTEM] All workers for campaign ${campaignId} have exited. Removing from registry.`);
+                    delete campaignProcesses[campaignId];
+                }
+            }
+        });
         child.on('close', (code) => console.log(`${roleName} #${i} exited with code ${code}`));
     }
-} 
+}
 
-spawnWorkers('services/scraper/linkedin/scraper-worker.js', 'scraper', Number(argv.scrapers));
-spawnWorkers('services/matchAndTailor/linkedin/matcher-worker.js', 'matcher', Number(argv.matchers));
-spawnWorkers('services/matchAndTailor/linkedin/tailor-worker.js', 'tailor', Number(argv.tailors));
+
+export async function launchCampaign(userId, role = 'Backend Engineer', instances = { matches: 1, tailors: 1, scrapers: 1 }) {
+    try {
+        if (!userId) throw new Error("UserID not defined.")
+        const campaignId = uuidv4();
+
+        await Campaign.create({
+            _id: campaignId,
+            userId: userId,
+            targetRole: role,
+            status: 'running'
+        });
+
+        const envBase = {
+            ...process.env,
+            CAMPAIGN_ID: campaignId,
+            CAMPAIGN_TARGET: role,
+            USER_ID: userId,
+        };
+
+        //  spawn the workers
+        spawnWorkers('services/scraper/linkedin/scraper-worker.js', 'scraper', instances.scrapers, envBase, campaignId);
+        spawnWorkers('services/matchAndTailor/linkedin/matcher-worker.js', 'matcher', instances.matches, envBase, campaignId);
+        spawnWorkers('services/matchAndTailor/linkedin/tailor-worker.js', 'tailor', instances.tailors, envBase, campaignId);
+
+        return { success: true, campaignId: campaignId };
+    }
+    catch (error) {
+        console.error(`ERROR WHILE LAUNCHING COMPAIN: ${error}`);
+    }
+}
+
+export async function stopCampaign(campaignId){
+    const processes = campaignProcesses[campaignId];
+     
+    if (!processes || processes.length===0){
+        console.warn(`[SYSTEM] No active processes found for campaign ${campaignId}. It may have already completed or never existed.`);
+        await Campaign.findByIdAndUpdate(campaignId, {status: 'stopped'});
+        return {sucess: true, message: "No active process found, status updated"};
+    }
+    console.log(`[SYSTEM] Sending STOP signal to ${processes.length} workers for campaign ${campaignId}...`);
+
+    // killing all the running process
+    processes.forEach(child => {
+        // send ctrl+c for shutdown
+        child.kill('SIGINT');
+    })
+
+    delete campaignProcesses[campaignId];
+    await Campaign.findByIdAndUpdate(campaignId, {status: 'stopped'});
+    return { success: true, message: "Stop signal sent to all workers." };
+}

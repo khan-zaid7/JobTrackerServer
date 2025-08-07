@@ -206,7 +206,7 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
                 await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
 
                 // No change to saving the job
-                const savedJob = await ScrapedJob.saveJobIfNotExists({ ...jobData, createdBy: user._id });
+                const savedJob = await ScrapedJob.saveJobIfNotExists({ ...jobData, createdBy: user._id, campaignId: campaignId  });
 
                 if (savedJob) {
                     const newJobId = savedJob._id.toString();

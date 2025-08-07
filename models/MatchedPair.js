@@ -14,7 +14,8 @@ const matchedPairSchema = new mongoose.Schema({
         default: 'pending',
         index: true
     },
-    tailoredResumeId: { type: mongoose.Schema.Types.ObjectId, ref: 'TailoredResume' }
+    tailoredResumeId: { type: mongoose.Schema.Types.ObjectId, ref: 'TailoredResume' },
+    campaignId: { type: String, required: true, index: true }
 }, { timestamps: true });
 
 matchedPairSchema.index({ userId: 1, jobId: 1 }, { unique: true });

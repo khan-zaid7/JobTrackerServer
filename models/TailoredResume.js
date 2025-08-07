@@ -19,6 +19,7 @@ const tailoredResumeSchema = new mongoose.Schema({
     error: { type: String },                // if any failure occurred
     pdfPath: { type: String },              // final compiled PDF (if used)
     rawAIResponse: { type: Object },        // full AI response if needed
+    campaignId: { type: String, required: true, index: true },
 
     // ✨ NEW FIELD: Stores the structured output from the analysis pass (Pass 1).
     analysis: {

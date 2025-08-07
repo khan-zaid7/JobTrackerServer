@@ -61,7 +61,7 @@ Native and SQLite that guarantees full functionality during network outages.
 Firestore and Node.js, featuring robust conflict resolution to ensure data integrity 
 between local devices and the cloud. 
 EXPERIENCE 
-Software Developer | Cybertron Technologies | Chandigarh, IN | Dec 2022 - Nov 2023 
+Software Developer | Cybertron Technologies | Chandigarh, IN | Dec 2021 - Nov 2023 
 • Productized a suite of internal process automation tools using React, Django, and 
 Node.js, saving an estimated 20 man-hours per week by eliminating manual data 
 entry and report generation. 

@@ -229,7 +229,8 @@ export const matchJobsToResume = async (jobsToProcess) => {
           jobId: match.id,
           matchConfidence: match.confidence,
           matchReason: match.reason || null, // Also add the reason from the AI
-          tailoringStatus: 'pending' // CORRECTED
+          tailoringStatus: 'pending',
+          campaignId: campaignId 
         });
 
         console.log(`[matchJobsToResume] Created MatchedPair document: ${newPair._id}`);

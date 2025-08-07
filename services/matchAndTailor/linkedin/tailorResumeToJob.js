@@ -161,7 +161,7 @@ function validateExperienceHonesty(tailoredResumeJson, originalExperienceYears) 
   console.log('[Validation Pass] Experience duration check passed.');
 }
 
-export async function tailorResumeToJob({ userId, resumeId, jobId}) {
+export async function tailorResumeToJob({ userId, resumeId, jobId, campaignId}) {
   try {
     const [resume, job] = await Promise.all([
       Resume.findById(resumeId),
@@ -214,7 +214,8 @@ export async function tailorResumeToJob({ userId, resumeId, jobId}) {
       rawAIResponse: finalResult,
       analysis: analysis,
       interviewPrep: interviewPrep,
-      status: 'success'
+      status: 'success',
+      campaignId: campaignId,
     });
 
     await createResumeDocument(tailoredResume, userId, job);
@@ -228,7 +229,8 @@ export async function tailorResumeToJob({ userId, resumeId, jobId}) {
       resumeId,
       jobId,
       status: 'failed',
-      error: err.message
+      error: err.message,
+      campaignId: campaignId,
     });
   }
 }
