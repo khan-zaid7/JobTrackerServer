@@ -168,7 +168,7 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
 
             // check if this job card is already processed. 
             const expectedUrl = `https://www.linkedin.com/jobs/view/${jobId}`;
-            const exists = await ScrapedJob.exists({ url: expectedUrl });
+            const exists = await ScrapedJob.exists({ url: expectedUrl, createdBy: user.id });
             console.log(`JOB ID : ${jobId}\n EXPECTED URL: ${expectedUrl}, EXISITS : ${exists}`);
 
             if (exists) {

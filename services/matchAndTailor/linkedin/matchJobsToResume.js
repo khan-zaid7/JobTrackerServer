@@ -1,7 +1,7 @@
 
 import ScrapedJob from '../../../models/ScrapedJob.js';
-import { callDeepSeekAPI } from '../../../utils/deepseek.js';
-import { publishToExchange} from '../../queue.js';
+import { callAIAPI } from '../../../utils/aiClient.js';
+import { publishToExchange } from '../../queue.js';
 import MatchedPair from '../../../models/MatchedPair.js'
 import Resume from '../../../models/Resume.js'
 import User from '../../../models/User.js';
@@ -44,31 +44,42 @@ const hasDuplicateIds = (response) => {
 const summarizeResume = async (resumeText) => {
   console.log('Summarizing resume...');
   const systemPrompt = `
-    You are an expert technical recruiter AI. Your task is to analyze a resume and extract key information into a structured JSON format.
-    Focus on:
-    1. A brief professional summary.
-    2. A list of core technical skills (e.g., programming languages, major frameworks, cloud platforms).
-    3. A list of secondary skills (e.g., databases, tools, libraries).
-    4. An estimated total years of professional experience as a number.
+    You are an expert data extraction AI. Your task is to analyze a resume and pull out specific information into a structured JSON format. Be precise and literal.
 
-    CRITICAL: Respond with ONLY the JSON object, nothing else.
+    You MUST extract the following fields:
+    1.  'professionalIdentity': A concise, 1-line summary of the candidate's professional role (e.g., "Senior Full Stack Developer", "Registered Nurse Case Manager", "B2B SaaS Sales Director").
+    2.  'coreSkills': A list of the top 5-10 technical or role-specific skills.
+    3.  'yearsOfExperience': Your best estimate of the candidate's total years of professional experience, returned AS AN INTEGER.
+    4.  'spokenLanguages': A list of all human languages mentioned in the resume. If only one is implied (e.g., resume in English), return ["English"].
+    5.  'requiredCertifications': A list of licenses or certifications held by the candidate (e.g., "RN", "CPA", "PMP", "AWS Certified Developer"). If none, return an empty array [].
 
-    Example Output Format:
+    CRITICAL: Respond with ONLY the JSON object. Do not add any conversational text.
+
+    Example for a Software Developer:
     {
-      "summary": "Experienced Full Stack Developer with a focus on JavaScript ecosystems and cloud deployment.",
-      "coreSkills": ["JavaScript", "TypeScript", "React", "Node.js", "AWS"],
-      "secondarySkills": ["PostgreSQL", "MongoDB", "Docker", "Git", "Jira"],
-      "yearsOfExperience": 5
+      "professionalIdentity": "Senior Software Engineer specializing in backend systems.",
+      "coreSkills": ["Java", "Spring Boot", "Kafka", "PostgreSQL", "AWS", "Docker"],
+      "yearsOfExperience": 8,
+      "spokenLanguages": ["English", "German (Conversational)"],
+      "requiredCertifications": ["AWS Certified Solutions Architect"]
+    }
+
+    Example for a Nurse:
+    {
+      "professionalIdentity": "Registered Nurse with experience in emergency and pediatric care.",
+      "coreSkills": ["Patient Assessment", "Trauma Care", "IV Therapy", "Electronic Health Records (EHR)", "Medication Administration"],
+      "yearsOfExperience": 6,
+      "spokenLanguages": ["English", "Spanish"],
+      "requiredCertifications": ["RN", "BLS", "ACLS"]
     }
   `;
 
   const userPrompt = `Here is the resume text:\n\n${resumeText}`;
 
   try {
-    const summary = await callDeepSeekAPI(
+    const summary = await callAIAPI(
       systemPrompt,
-      userPrompt,
-      { model: 'deepseek-chat', maxTokens: 2048 } // Small, specific task
+      userPrompt
     );
     console.log('Resume summarized successfully.');
     return summary;
@@ -128,8 +139,21 @@ export const matchJobsToResume = async (jobsToProcess) => {
     if (!resume) {
       throw new Error(`Master resume not found for user ${userId}`);
     }
+    
+    try {
+      const resumeIdToLink = resume._id;
+      const updateResult = await ScrapedJob.updateMany(
+        { _id: { $in: jobIds } }, // Condition: Match all jobs in this batch
+        { $set: { resumeId: resumeIdToLink } } // Action: Set their resumeId
+      );
+      console.log(`[Matcher Service] Successfully linked ${updateResult.modifiedCount} jobs to resume ${resumeIdToLink}.`);
+    } catch (dbError) {
+      console.error(`[Matcher Service] CRITICAL DB ERROR: Failed to link jobs to resume ${resume._id}.`, dbError);
+      // Depending on business logic, you might want to halt the process here
+      throw new Error('Failed to update jobs with resumeId, halting process.');
+    }
 
-    const resumeSummary = await summarizeResume(resume.textContent);
+    const resumeSummary = (resume.textContent);
 
     console.log(`Found ${validJobs.length} valid jobs to process for user ${user.name}.`);
 
@@ -154,10 +178,10 @@ export const matchJobsToResume = async (jobsToProcess) => {
       for (let attempt = 1; attempt <= 2 && !chunkSuccess; attempt++) {
         try {
           console.log(`--- Processing Chunk ${index + 1}/${jobChunks.length}, Attempt ${attempt} ---`);
-          const response = await callDeepSeekAPI(
+          const response = await callAIAPI(
             buildSystemPrompt(),
             buildUserPrompt({ scrapedJobsArr: chunk, resumeSummary }),
-            { model: 'deepseek-reasoner', maxTokens: 32000 }
+            { model: 'gpt-4.1' }
           );
 
           if (hasDuplicateIds(response)) {
@@ -193,10 +217,10 @@ export const matchJobsToResume = async (jobsToProcess) => {
 
             // We process this job in its own "chunk" of 1.
             const singleJobChunk = [singleJob];
-            const response = await callDeepSeekAPI(
+            const response = await callAIAPI(
               buildSystemPrompt(),
               buildUserPrompt({ scrapedJobsArr: singleJobChunk, resumeSummary }),
-              { model: 'deepseek-chat', maxTokens: 2000 } // Can use fewer tokens for one job
+              { model: 'gpt-4.1' }
             );
 
             // No need to check for duplicates here, as there's only one job.
@@ -230,7 +254,7 @@ export const matchJobsToResume = async (jobsToProcess) => {
           matchConfidence: match.confidence,
           matchReason: match.reason || null, // Also add the reason from the AI
           tailoringStatus: 'pending',
-          campaignId: campaignId 
+          campaignId: campaignId
         });
 
         console.log(`[matchJobsToResume] Created MatchedPair document: ${newPair._id}`);
@@ -266,81 +290,76 @@ export const matchJobsToResume = async (jobsToProcess) => {
 };
 
 // ✅ FIX: System prompt is updated to expect a summary object, not raw text.
+// ✅ NEW "ANTI-SHITLORD" SYSTEM PROMPT
+
 const buildSystemPrompt = () => {
-  return `
-    🧠 You are a world-class executive recruiter and a ruthless career strategist. Your mission is to determine if a job opportunity is a **LOGICAL AND QUALIFIED** career move for a specific candidate. You will execute a multi-phase filtering process.
+  return `🧠 You are a hyper-vigilant, detail-obsessed Senior Tech Recruiter. Your reputation depends on NOT wasting your hiring manager's time with obviously bad fits. You are a world-class expert at spotting deal-breakers.
 
-    You will receive:
-    - scrapedJobsArr: An array of job objects.
-    - resumeSummary: A JSON object containing the candidate's 'professionalIdentity', 'coreSkills', and 'secondarySkills'.
+You will receive a candidate's 'Full Resume Text' and an array of 'jobData' objects.
 
-    ---
-    🚨 **PHASE 1: THE STRATEGIC FIT (DOMAIN) FILTER** 🚨
-    ---
-    This is your first, most critical gate. You will analyze the fundamental nature of the job and the candidate.
+---
+🚨 **MISSION DIRECTIVE: THE DEAL-BREAKER CHECKLIST** 🚨
+---
 
-    **STEP 1: IDENTIFY THE JOB'S DOMAIN.**
-    Is the core function "Software Engineering," "Sales," "Teaching," "Nursing," etc.?
+For EACH job, you MUST perform the following analysis in this EXACT order. This is not optional.
 
-    **STEP 2: COMPARE DOMAINS.**
-    Compare the job's domain to the candidate's \`professionalIdentity\`.
+**STEP 1: IDENTIFY THE JOB'S CORE DOMAIN & DEAL-BREAKERS**
 
-    **STEP 3: MAKE THE STRATEGIC REJECTION.**
-    A job is **INSTANTLY REJECTED** if it is an **ILLOGICAL DOMAIN MISMATCH.**
-    *   **Example:** Candidate is a "Process Automation Engineer." Job is an "English Teacher in China." -> REJECT. Reason: "Domain Mismatch: Non-technical teaching role is not aligned with an engineering career path."
-    *   **Example:** Candidate is a "Sales Executive." Job is a "Senior C++ Developer." -> REJECT. Reason: "Domain Mismatch: Deep technical role is not aligned with a sales career path."
-    
-    **YOU WILL PERFORM THIS CHECK FIRST. ALL JOBS THAT FAIL THIS CHECK GO DIRECTLY INTO THE "rejected" LIST.**
+First, analyze the job description and mentally fill out this checklist:
 
-    ---
-    🎯 **PHASE 2: THE TACTICAL FIT (SKILLS) FILTER** 🎯
-    ---
-    For all jobs that **SURVIVED** the strategic domain filter, you will now perform a detailed technical qualification analysis.
+*   **Primary Spoken Language:** Is the job description written in a language other than English (e.g., French, German)? If so, what is it?
+*   **Required Hard Certification:** Is there a mandatory certification (e.g., "SAP Certified," "PMP," "CPA")?
+*   **Core Technology Domain:** What is the specific, non-negotiable technology ecosystem? (e.g., "SAP Integration Suite," "Salesforce," "Oracle ERP," "iOS Development," "Embedded Systems"). Is it a standard Web/Backend role or something highly specialized?
+*   **Absolute Minimum Years of Experience:** Does the job explicitly state a hard number like "7+ years" or "Senior-level requirement"?
 
-    **STEP 1: IDENTIFY HARD REQUIREMENTS & KNOCK-OUT FACTORS.**
-    Analyze the job description for non-negotiable requirements.
-    *   **Hard Skill Requirement:** A specific, mandatory technology (e.g., "5+ years of OpenGL," "expert in SAP").
-    *   **Spoken Language Requirement:** Mandatory fluency in a human language (e.g., "fluent French").
+**STEP 2: COMPARE CHECKLIST AGAINST THE RESUME**
 
-    **STEP 2: MAKE THE TACTICAL REJECTION.**
-    A job that survived Phase 1 is **STILL REJECTED** if it fails this check.
-    *   **Example:** Candidate is a "Software Engineer." Job is "Senior Graphics Engineer." It passed the domain filter. BUT, the job requires "OpenGL," which is absent from the resume. -> REJECT. Reason: "Hard Skill Mismatch: Mandatory requirement for OpenGL is absent."
+Now, compare your checklist from Step 1 against the candidate's resume.
 
-    ---
-    ⚙️ **PHASE 3: CLASSIFY THE FINAL SURVIVORS** ⚙️
-    ---
-    For the elite few jobs that have passed **BOTH** Phase 1 and Phase 2, you will now classify them as "matched" or "borderline."
+*   **LANGUAGE MISMATCH?**
+    *   Job is in French, but the candidate's resume shows no French skills. --> **DEAL-BREAKER.**
 
-    ✅ **MATCHED (High-Confidence Fit):**
-    *   The candidate's \`coreSkills\` are a STRONG MATCH for the job's primary technical requirements.
-    *   The candidate has significant overlap with secondary requirements.
-    *   The experience level is a plausible fit.
+*   **CERTIFICATION MISMATCH?**
+    *   Job requires "SAP Certified," but the candidate has no such certification. --> **DEAL-BREAKER.**
 
-    ⚠️ **BORDERLINE (Plausible "Stretch" Fit):**
-    *   The candidate has strong transferable skills (e.g., has AWS for an Azure job).
-    *   OR the experience level is a stretch, but the core skills are a perfect match.
+*   **DOMAIN MISMATCH?**
+    *   Job's core domain is "SAP Integration Suite," but the candidate's entire experience is in general web development (Node.js, React, Django). They have never touched SAP. --> **DEAL-BREAKER.**
 
+*   **EXPERIENCE MISMATCH?**
+    *   Job requires "7+ years," and the candidate has 1-2 years. --> **DEAL-BREAKER.**
 
-    ---
-    📤 **FINAL OUTPUT FORMAT (JSON ONLY)** 📤
-    ---
-    Return a single JSON object. DO NOT add any commentary.
+**STEP 3: SCORING AND CLASSIFICATION**
 
-    {
-      "matched": [
-        { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.95, "matchedSkills": ["Python", "AWS", "SQL"], "reason": "Excellent match on core Python and cloud skills." }
-      ],
-      "borderline": [
-        { "id": "job_id", "title": "Job Title", "companyName": "Company", "confidence": 0.75, "reason": "Strong match on Node.js/React, but lacks required GraphQL experience.", "matchedSkills": ["Node.js", "React"] }
-      ],
-      "rejected": [
-        { "id": "job_id_1", "confidence": 0.0, "rejectionReason": "Domain Mismatch: Teaching role is not aligned with an engineering career path." },
-        { "id": "job_id_2", "confidence": 0.1, "rejectionReason": "Hard Skill Mismatch: Mandatory requirement for OpenGL is absent." }
-      ]
-    }
-    `.trim();
+1.  **If you found ANY "DEAL-BREAKER" in Step 2:**
+    *   The job is an immediate **REJECTED** case.
+    *   Confidence MUST be **0.0**.
+    *   The reason MUST state the specific deal-breaker (e.g., "Deal-Breaker: Job is in a specialized SAP domain, candidate has no SAP experience.").
+
+2.  **If there are NO deal-breakers:**
+    *   NOW, and ONLY now, you may perform a nuanced analysis of the remaining skills.
+    *   Look at the transferable skills and projects in the full resume text to decide between **matched** and **borderline**.
+    *   **Borderline (0.6 - 0.89):** For cases like "Job wants Kubernetes, candidate has extensive Docker/containerization experience." This is a plausible stretch fit.
+    *   **Matched (0.9 - 1.0):** Core skills (e.g., React, Node.js, AWS) align directly with the job description.
+
+---
+📤 **FINAL OUTPUT FORMAT (JSON ONLY)** 📤
+---
+
+Return a single JSON object. Classify every job. The reason for rejection MUST be specific and reference the deal-breaker.
+
+{
+  "matched": [...],
+  "borderline": [
+    { "id": "job_id_456", "confidence": 0.75, "reason": "No deal-breakers found. Strong transferable skills in containerization (Docker) make up for the lack of direct Kubernetes experience." }
+  ],
+  "rejected": [
+    { "id": "job_id_sap", "confidence": 0.0, "reason": "Deal-Breaker: Job is in the SAP Integration Suite domain, which is a mismatch for the candidate's general web development background." },
+    { "id": "job_id_french", "confidence": 0.0, "reason": "Deal-Breaker: Job is written in French, and the candidate does not list French language skills." },
+    { "id": "job_id_senior", "confidence": 0.0, "reason": "Deal-Breaker: Job requires 7+ years of experience, candidate has ~1 year." }
+  ]
+}
+`.trim();
 };
-
 // ✅ FIX: User prompt is updated to send the summary object.
 const buildUserPrompt = ({ scrapedJobsArr, resumeSummary }) => {
   return `

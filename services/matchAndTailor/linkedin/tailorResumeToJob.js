@@ -1,7 +1,7 @@
 import Resume from '../../../models/Resume.js';
 import ScrapedJob from '../../../models/ScrapedJob.js';
 import TailoredResume from '../../../models/TailoredResume.js';
-import { callDeepSeekAPI } from '../../../utils/deepseek.js';
+import { callDeepSeekReasonerAPI } from '../../../utils/aiClient.js';
 import { createResumeDocument } from './createResumeDocument.js';
 
 // =================================================================
@@ -183,7 +183,7 @@ export async function tailorResumeToJob({ userId, resumeId, jobId, campaignId}) 
 
     // --- PASS 1: ANALYSIS ---
     console.log(`[Pass 1/2: Analyzing] Job: ${job.title}`);
-    const analysisResultRaw = await callDeepSeekAPI(analysisSystemPrompt, userPrompt, { model: 'deepseek-chat' });
+    const analysisResultRaw = await callDeepSeekReasonerAPI(analysisSystemPrompt, userPrompt);
     const analysisResult = safeJsonParse(analysisResultRaw);
     if (!analysisResult?.analysis) {
       throw new Error('Analysis Pass (1/2) failed: AI did not return a valid analysis object.');
@@ -192,7 +192,7 @@ export async function tailorResumeToJob({ userId, resumeId, jobId, campaignId}) 
     // --- PASS 2: GENERATION ---
     console.log(`[Pass 2/2: Generating with Credibility Bridge] Job: ${job.title}`);
     const generatorSystemPrompt = getGeneratorSystemPrompt(analysisResult.analysis);
-    const finalResultRaw = await callDeepSeekAPI(generatorSystemPrompt, userPrompt, { model: 'deepseek-reasoner' });
+    const finalResultRaw = await callDeepSeekReasonerAPI(generatorSystemPrompt, userPrompt);
     const finalResult = safeJsonParse(finalResultRaw);
 
     if (!finalResult?.tailored_sections || !finalResult.tailored_resume) {

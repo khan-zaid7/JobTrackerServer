@@ -1,6 +1,6 @@
 // extractors/jobDetailExtract.js
 import { DateTime } from 'luxon'; // if not available, you can use JS Date manually
-import { callDeepSeekAPI } from '../../../utils/deepseek.js';
+import { callAIAPI } from '../../../utils/aiClient.js';
 
 /**
  * Master function to extract all job detail fields.
@@ -175,7 +175,7 @@ export async function extractJobDescription(page) {
 
 
     try {
-        const parsed = await callDeepSeekAPI(systemPrompt, userPrompt);
+        const parsed = await callAIAPI(systemPrompt, userPrompt);
         return {
             responsibilities: parsed.responsibilities || '',
             qualifications: parsed.qualifications || '',

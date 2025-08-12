@@ -30,7 +30,7 @@ const ScrapedJobSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Static method to save job if URL does not exist
+// Static method to save job if it does not exist for a specific user
 ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, options = {}) {
   const {
     title,
@@ -41,13 +41,13 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     postedAt = null,
     description = {},
     relatedReferences = {},
-    createdBy = null,
+    createdBy = null, // The user's ID
     batchId = null,
     isRelevant = false,
     is_deleted = false,
     rejectionReason = null,
     confidenceFactor = null,
-    resumeId = null // ✅ Accept resumeId from input
+    resumeId = null
   } = jobDetails;
 
   // Normalize description arrays
@@ -63,12 +63,16 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     linkedin: relatedReferences.linkedin || null
   };
 
-  const existing = await this.findOne({ url });
+  // ✅ FIX: Check for a duplicate based on both URL and the user who created it.
+  const existing = await this.findOne({ url, createdBy });
+
   if (existing) {
-    console.log(`[Duplicate Skipped] ${title} @ ${companyName}`);
-    return null;
+    // The log message is now more accurate, as this is a duplicate for this specific user.
+    console.log(`[User Duplicate Skipped] User ${createdBy} already saved: ${title} @ ${companyName}`);
+    return null; // Return null because the job already exists for this user
   }
 
+  // If no duplicate is found for the user, create and save the new job document.
   const jobDoc = new this({
     title,
     url,
@@ -84,17 +88,19 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     is_deleted,
     rejectionReason,
     campaignId,
-    resumeId // ✅ Store resume reference
+    resumeId
   });
 
   try {
     await jobDoc.save();
     return jobDoc;
   } catch (e) {
+    // This handles potential race conditions if a database-level unique index is violated.
     if (e.code === 11000) {
-      console.log(`[Mongo Duplicate] ${url} already exists.`);
+      console.log(`[Mongo Duplicate] A race condition occurred. The job at ${url} was saved by user ${createdBy} just now.`);
       return null;
     }
+    // Re-throw other types of errors.
     throw e;
   }
 };
