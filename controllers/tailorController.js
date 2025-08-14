@@ -7,6 +7,7 @@ import { generateResumeHTML } from '../utils/resumeTemplate.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { callAIAPI } from '../utils/aiClient.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -70,25 +71,6 @@ Match Summary:
 ${matchSummary}`;
 };
 
-// Helper to make API request
-const callDeepSeekAPI = async (systemPrompt, userPrompt) => {
-  const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-    model: 'deepseek-chat',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    temperature: 0.2,
-    max_tokens: 1800
-  }, {
-    headers: {
-      'Authorization': `Bearer ${process.env.DEEPSEEK_APIKEY}`,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  return response.data.choices[0].message.content;
-};
 
 // Helper to sanitize the AI response
 const sanitizeResumeOutput = (content) => {
@@ -112,7 +94,7 @@ export const tailorResume = async (req, res) => {
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt({ jobDescription, resumeText, matchedSkills, missingSkills, matchSummary });
 
-    const rawTailoredResume = await callDeepSeekAPI(systemPrompt, userPrompt);
+    const rawTailoredResume = await callAIAPI(systemPrompt, userPrompt);
     const tailoredResume = sanitizeResumeOutput(rawTailoredResume);
 
     matchResult.tailoredResume = tailoredResume;

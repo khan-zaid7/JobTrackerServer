@@ -35,7 +35,9 @@ export const uploadResume = async (req, res) => {
       filePath: file.path,
       textContent,
       isMaster: req.body.isMaster === 'true',
+      createdBy: req.user.id, // <-- add this
     });
+
 
     res.json({ message: 'Resume uploaded successfully', resume });
   } catch (error) {
@@ -46,7 +48,8 @@ export const uploadResume = async (req, res) => {
 
 export const getAllResumes = async (req, res) => {
   try {
-    const resumes = await Resume.find();
+    const resumes = await Resume.find({ createdBy: req.user.id });
+    
     res.json(resumes);
   } catch (error) {
     console.error(error);
@@ -57,7 +60,7 @@ export const getAllResumes = async (req, res) => {
 export const deleteResume = async (req, res) => {
   try {
     const { id } = req.params;
-    const deleted = await Resume.findByIdAndDelete(id);
+    const deleted = await Resume.findOneAndDelete({ _id: id, createdBy: req.user.id });
 
     if (!deleted) {
       return res.status(404).json({ message: 'Resume not found' });
@@ -84,7 +87,7 @@ export const updateResume = async (req, res) => {
     const { isMaster } = req.body;
     const file = req.file;
 
-    const resume = await Resume.findById(id);
+    const resume = await Resume.findOne({ _id: id, createdBy: req.user.id });
     if (!resume) {
       return res.status(404).json({ message: 'Resume not found' });
     }
@@ -119,7 +122,8 @@ export const updateResume = async (req, res) => {
 export const getResumeById = async (req, res) => {
   try {
     const { id } = req.params;
-    const resume = await Resume.findById(id);
+    const resume = await Resume.findOne({ _id: id, createdBy: req.user.id });
+
 
     if (!resume) {
       return res.status(404).json({ message: 'Resume not found' });

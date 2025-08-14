@@ -38,7 +38,6 @@ router.post('/login', async (req, res) => {
 // Protected route
 router.get('/me', auth, async (req, res) => {
   const user = await User.findById(req.user.id).select('-password');
-  console.log("Something");
   res.json(user);
 });
 
