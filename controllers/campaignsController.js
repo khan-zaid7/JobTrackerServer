@@ -8,34 +8,44 @@ import mongoose from 'mongoose';
 
 export async function launchCampaignController(req, res) {
     try {
-        // ✨ THE FIX: Get the user ID from the authenticated user session, NOT the request body.
-        // Assumes your auth middleware adds a `user` object to the request, e.g., req.user = { id: '...' }
+        // Assumes your auth middleware adds a `user` object to the request, e.g., req.user.id
         const userId = req.user.id; 
         
-        const { targetRole, instances } = req.body;
+        // 1. Destructure the new location and resumeId fields from the request body
+        const { targetRole, location, resumeId, instances } = req.body;
 
-        if (!targetRole) {
-            return res.status(400).json({ success: false, message: 'targetRole is required.' });
+        // 2. Add validation for the new required fields
+        if (!targetRole || !location || !resumeId) {
+            const missingFields = [];
+            if (!targetRole) missingFields.push('targetRole');
+            if (!location) missingFields.push('location');
+            if (!resumeId) missingFields.push('resumeId');
+            
+            return res.status(400).json({ 
+                success: false, 
+                message: `Missing required fields: ${missingFields.join(', ')}.` 
+            });
         }
 
-        // 1. Check if a campaign with 'running' status already exists for this user.
-        const existingRunningCampaign = await Campaign.findOne({ userId: userId, status: 'running' });
+        // 3. Check if a campaign with 'running' status already exists for this user.
+        const existingRunningCampaign = await Campaign.findOne({ createdBy: userId, status: 'running' });
 
-        // 2. If a running campaign is found, block the new launch.
+        // 4. If a running campaign is found, block the new launch.
         if (existingRunningCampaign) {
-            return res.status(409).json({ // 409 Conflict is the perfect status code for this.
+            return res.status(409).json({ // 409 Conflict is a good status code here
                 success: false,
                 message: 'You already have a campaign running. Please stop it before launching a new one.'
             });
         }
 
-        // 3. If no running campaign is found, proceed to launch the new one.
-        const result = await launchCampaign(userId, targetRole, instances);
+        // 5. If validation passes and no campaign is running, proceed to launch the new one.
+        //    Pass the new arguments to the launchCampaign service function.
+        const result = await launchCampaign(userId, targetRole, location, resumeId, instances);
         
         if (result.success) {
-            return res.status(202).json(result); // 202 Accepted is good for an async operation
+            return res.status(202).json(result); // 202 Accepted for starting an async process
         } else {
-            // If the launch service itself fails
+            // Handle specific errors from the launch service
             return res.status(400).json({ success: false, message: result.error });
         }
     } catch (error) {
@@ -43,7 +53,6 @@ export async function launchCampaignController(req, res) {
         return res.status(500).json({ success: false, message: `Internal server error` });
     }
 }
-
 export async function getAllCampaigns(req, res) {
     try {
         // ✨ THE FIX: Get the user ID from the authenticated token, not params.

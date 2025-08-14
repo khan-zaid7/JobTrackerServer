@@ -5,7 +5,9 @@ import { publishToExchange } from '../../queue.js';
 import MatchedPair from '../../../models/MatchedPair.js'
 import Resume from '../../../models/Resume.js'
 import User from '../../../models/User.js';
+import dotenv from 'dotenv';
 const CHUNK_SIZE = 5;
+dotenv.config();
 
 function chunkArray(array, size) {
   const result = [];
@@ -134,12 +136,12 @@ export const matchJobsToResume = async (jobsToProcess) => {
     if (!allJobsBelongToSameUser) {
       throw new Error('CRITICAL DATA INTEGRITY ERROR: Job batch contains jobs from multiple users.');
     }
-
-    const resume = await Resume.findOne({ createdBy: userId, isMaster: true });
+    const resumeId = process.env.RESUME_ID;
+    const resume = await Resume.findOne({ _id: resumeId, createdBy: userId });
     if (!resume) {
       throw new Error(`Master resume not found for user ${userId}`);
     }
-    
+
     try {
       const resumeIdToLink = resume._id;
       const updateResult = await ScrapedJob.updateMany(

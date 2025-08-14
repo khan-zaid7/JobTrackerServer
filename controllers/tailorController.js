@@ -7,7 +7,7 @@ import { generateResumeHTML } from '../utils/resumeTemplate.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { callDeepSeekAPI } from '../utils/deepseek.js';
+import { callAIAPI } from '../utils/aiClient.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -94,7 +94,7 @@ export const tailorResume = async (req, res) => {
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt({ jobDescription, resumeText, matchedSkills, missingSkills, matchSummary });
 
-    const rawTailoredResume = await callDeepSeekAPI(systemPrompt, userPrompt);
+    const rawTailoredResume = await callAIAPI(systemPrompt, userPrompt);
     const tailoredResume = sanitizeResumeOutput(rawTailoredResume);
 
     matchResult.tailoredResume = tailoredResume;

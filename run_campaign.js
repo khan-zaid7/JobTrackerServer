@@ -40,7 +40,7 @@ function spawnWorkers(path, roleName, count, envBase, campaignId) {
 }
 
 
-export async function launchCampaign(userId, role = 'Backend Engineer', instances = { matches: 1, tailors: 1, scrapers: 1 }) {
+export async function launchCampaign(userId, role = 'Backend Engineer', location="Canada", resumeId, instances = { matches: 1, tailors: 1, scrapers: 1 }) {
     try {
         if (!userId) throw new Error("UserID not defined.")
         const campaignId = uuidv4();
@@ -57,6 +57,8 @@ export async function launchCampaign(userId, role = 'Backend Engineer', instance
             CAMPAIGN_ID: campaignId,
             CAMPAIGN_TARGET: role,
             USER_ID: userId,
+            RESUME_ID:resumeId,
+            CAMPAIGN_LOCATION:location 
         };
 
         //  spawn the workers

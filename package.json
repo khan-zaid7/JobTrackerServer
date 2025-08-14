@@ -9,7 +9,7 @@
     "start:tailor": "node services/matchAndTailor/linkedin/tailor-worker.js",
     "seed": "node seed.js",
     "start": "concurrently --kill-others-on-fail -n \"SCRAPER,MATCHER,TAILOR\" \"npm:start:scraper\" \"npm:start:matcher\" \"npm:start:tailor\"",
-    "dev": "node index.js"
+    "dev": "nodemon index.js"
   },
   "keywords": [],
   "author": "",

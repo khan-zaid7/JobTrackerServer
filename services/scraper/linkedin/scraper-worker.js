@@ -22,8 +22,9 @@ const startScraperWorker = async () => {
     const campaignId = process.env.CAMPAIGN_ID;
     const targetRole = process.env.CAMPAIGN_TARGET;
     const userId = process.env.USER_ID;
+    const targetLocation = process.env.CAMPAIGN_LOCATION;
 
-    if (!campaignId || !targetRole || !userId) {
+    if (!campaignId || !targetRole || !userId || !targetLocation) {
         throw new Error("FATAL: Scraper worker started without a complete mission (CAMPAIGN_ID, CAMPAIGN_TARGET, and USER_ID are required).");
     }
 
@@ -41,7 +42,7 @@ const startScraperWorker = async () => {
         
         // This is a short-lived process. Its only job is to run this one scrape.
         await runJobScraper(
-            { search_term: targetRole, location: 'Canada' }, // We can still hardcode location for now
+            { search_term: targetRole, location: targetLocation }, // We can still hardcode location for now
             user,
             campaignId
         );
