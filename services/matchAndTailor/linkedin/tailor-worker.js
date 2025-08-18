@@ -78,6 +78,7 @@ const startTailorWorker = async () => {
                 userId: pair.userId,
                 resumeId: pair.resumeId,
                 jobId: pair.jobId,
+                matchedPairId: pair.id,
                 campaignId: CAMPAIGN_ID
             });
 

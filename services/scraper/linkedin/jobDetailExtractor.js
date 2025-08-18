@@ -16,16 +16,17 @@ export default async function extractJobDetails(page) {
     const description = await extractJobDescription(page);
     const url = await extractJobUrl(page);
     const companyName = await extractCompanyName(page);
-    
-    // ✨ THIS IS THE CRITICAL FIX: THE GUARD CLAUSE ✨
-    // Before returning, we validate that the most important data was actually found.
-    if (!title || !companyName) {
-        // If we are missing a title or company name, this job data is corrupt.
-        // We throw a specific error that the calling function can catch.
-        // This stops us from ever trying to save an invalid job to the database.
-        throw new Error(`Data extraction failed: Missing required fields (title: ${title}, companyName: ${companyName})`);
-    }
 
+    if (!title || !companyName) {
+        // This stops us from ever trying to save an invalid job to the database.
+        console.warn(`Data extraction failed: Missing required fields (title: ${title}, companyName: ${companyName})`);
+    }
+    
+    if (description.language && description.language.toLowerCase() !== 'english') {
+        // This is a non-English job, so we reject it.
+        console.log(`[Gatekeeper] Rejecting job. Reason: Language is '${description.language}', not 'english'.`);
+        return null; // Or `return true;` to exit the function.
+    }
     return {
         title,
         location,
@@ -130,6 +131,7 @@ export async function extractJobDescription(page) {
     if (!contentHandle) {
         console.warn('❌ No job description container found.');
         return {
+            roleOverview: '',
             responsibilities: '',
             qualifications: '',
             benefits: ''
@@ -140,53 +142,82 @@ export async function extractJobDescription(page) {
     const rawHTML = await contentHandle.evaluate(el => el.innerHTML);
     console.info('Started fetching descprtion');
     const systemPrompt = `
-        You are a specialized HTML-to-JSON extraction model focused on job listings.
-
-        Your purpose is to convert messy or inconsistent job description HTML into accurate, structured data. You do this by understanding the **meaning** of the content — not relying on visual formatting, tags, or headings.
-
-        Your results must be reliable, clean, and complete. Prioritize semantic accuracy and real-world usefulness.
+        You are a world class and elite level HTML data sanitizer and extractor. You are given a raw HTML content of a Job Description and you are asked to clean that content. With your powerful and elite capabilites you can sanitize that data to remove all the unnessesray bluff and html markup lanaguge to fetch and convert only rich text into a json blueprint that an later AI can use to extract relevant and important infromation regarding the Role overview, Responsibilties of the role, Qualifications required for the role and benifits if any.  
         `;
 
 
     const userPrompt = `
-        You are analyzing raw HTML taken from a job listing. Your task is to extract structured information about the role, even if the content is unorganized, the headings are missing, or the format is inconsistent.
+        Your task is to populate the following JSON blueprint. Analyze the provided HTML and extract the relevant information into the correct fields.
 
-        Return a valid JSON object with **all three fields**, as shown below:
+    ### JSON Blueprint ###
+    {
+        "role_overview": {
+            "title": "a string (if available)",
+            "company": "a string (if available)",
+            "summary": "a string (if available)",
+            "work_model": "a string like 'Remote', 'On-site', or 'Hybrid' (if explicitly mentioned)"
+        },
+        "responsibilities": [
+           "an Array of tasks (if available)"
+        ],
+        "qualifications": {
+            "required": [
+                "an Array of mandatory skills/experience (if available)"
+            ],
+            "desired": [
+                "an Array of non-mandatory skills, often marked as 'preferred', 'a plus', or 'nice to have' (if available)"
+            ]
+        },
+        "benefits": [
+           "an Array of perks for the employee, (if available)"
+        ]
+        "language": "Analyze the entire HTML document. Determine the primary language the text is written in. Return the full name of the language (e.g., 'French', 'English'). This is an analysis task, not an extraction task."
+    }
 
-        - "responsibilities" (REQUIRED): List the tasks, duties, or deliverables expected of the candidate. This may appear anywhere — at the start, middle, or end — and must be extracted based on meaning, not section titles.
-        - "qualifications" (REQUIRED): Extract any listed or implied skills, experiences, education, or credentials the employer is seeking. Look across the entire HTML. Do not skip this field, even if a heading like “Qualifications” is missing.
-        - "benefits": Include any perks, compensation info, PTO, health coverage, bonuses, or internal culture notes that serve the employee.
-        - "relatedReferences": Extract any email addresses, phone numbers, or LinkedIn profile links mentioned in the HTML.
-
-        Mandatory Requirements:
-        - You **must extract responsibilities and qualifications**. If headings are missing, **infer** based on sentence meaning and phrasing.
-        - If content is embedded in a general paragraph, still extract it.
-        - If one section overlaps with another, divide the content based on logical meaning.
-        - If no benefits are mentioned, return an empty string for "benefits".
-
-        Output Rules:
-        - Only return a well-formed JSON object with the fields: responsibilities, qualifications, and benefits.
-        - Do not return any extra commentary, explanation, or HTML.
-
-        HTML to analyze:
-        ${rawHTML}
+    ### HTML to Analyze: ###
+    ${rawHTML}
         `;
 
 
 
     try {
         const parsed = await callAIAPI(systemPrompt, userPrompt);
+        console.log(JSON.stringify(parsed));
+
         return {
-            responsibilities: parsed.responsibilities || '',
-            qualifications: parsed.qualifications || '',
-            benefits: parsed.benefits || ''
+            roleOverview: {
+                title: parsed.role_overview?.title ?? null,
+                company: parsed.role_overview?.company ?? null,
+                summary: parsed.role_overview?.summary ?? null,
+                work_model: parsed.role_overview?.work_model ?? null
+            },
+            responsibilities: parsed.responsibilities ?? [],
+            qualifications: {
+                required: parsed.qualifications?.required ?? [],
+                desired: parsed.qualifications?.desired ?? []
+            },
+            benefits: parsed.benefits ?? [],
+            language: parsed.language ?? []
         };
     } catch (e) {
-        console.error("❌ Failed to parse with DeepSeek:", e);
+        console.error("❌ Failed to parse with AI:", e);
+
+        // ✅ RETURN A CONSISTENT EMPTY SCHEMA ON ERROR
+        // This ensures the function always returns the same "shape" of object,
+        // which prevents errors in the code that uses this function's output.
         return {
-            responsibilities: '',
-            qualifications: '',
-            benefits: ''
+            roleOverview: {
+                title: null,
+                company: null,
+                summary: null,
+                work_model: null
+            },
+            responsibilities: [],
+            qualifications: {
+                required: [],
+                desired: []
+            },
+            benefits: []
         };
     }
 }

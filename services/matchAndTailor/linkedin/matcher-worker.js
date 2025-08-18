@@ -4,19 +4,13 @@ import {
     connectToQueue,
     getChannel,
     closeQueueConnection,
-    consumeFromExchange,
     consumeFromCampaignQueue
 } from '../../queue.js';
-
 import { matchJobsToResume } from './matchJobsToResume.js';
 
 dotenv.config();
 
-const BATCH_SIZE = 5;
-const BATCH_TIMEOUT_MS = 60000;
-
-// ✨ THE FIX: GET THE CAMPAIGN ID FROM THE ENVIRONMENT ✨
-// This is passed in by the 'run_campaign.js' script.
+// The CAMPAIGN_ID is passed in by the 'run_campaign.js' script.
 const CAMPAIGN_ID = process.env.CAMPAIGN_ID;
 
 const connectDB = async () => {
@@ -44,61 +38,36 @@ const startMatcherWorker = async () => {
         process.exit(1);
     }
 
-    channel.prefetch(BATCH_SIZE);
+    // ✅ Set prefetch to 1 to process one message at a time.
+    channel.prefetch(1);
 
-    let jobMessageBatch = [];
-    let batchTimeout = null;
+    console.log(`[Matcher-${CAMPAIGN_ID}] 🔁 Ready. Waiting for jobs...`);
 
-    console.log(`[Matcher-${CAMPAIGN_ID}] 🔁 Ready. Batch size: ${BATCH_SIZE}, Timeout: ${BATCH_TIMEOUT_MS}ms.`);
-
-    const processBatch = async () => {
-        if (batchTimeout) {
-            clearTimeout(batchTimeout);
-            batchTimeout = null;
-        }
-
-        const batchToProcess = [...jobMessageBatch];
-        jobMessageBatch = [];
-
-        if (batchToProcess.length === 0) return;
-
-        // ✨ We now extract the campaignId from the message to pass it down the line
-        const jobsToProcess = batchToProcess.map(msg => JSON.parse(msg.content.toString()));
-        const jobIds = jobsToProcess.map(job => job.jobId);
-        
-        console.log(`[Matcher-${CAMPAIGN_ID}] ⚙️ Processing batch of ${jobIds.length} jobs.`);
-
-        try {
-            // Pass the entire campaign context to the matching service
-            const isSuccess = await matchJobsToResume(jobsToProcess);
-
-            if (isSuccess) {
-                console.log(`[Matcher-${CAMPAIGN_ID}] ✅ Batch matched. Acknowledging messages.`);
-                batchToProcess.forEach(msg => channel.ack(msg));
-            } else {
-                console.warn(`[Matcher-${CAMPAIGN_ID}] ⚠️ matchJobsToResume failed. Requeueing messages.`);
-                batchToProcess.forEach(msg => channel.nack(msg, false, true)); // Requeue on logical failure
-            }
-        } catch (error) {
-            console.error(`[Matcher-${CAMPAIGN_ID}] ❌ Critical error during match. Rejecting batch.`, error);
-            batchToProcess.forEach(msg => channel.nack(msg, false, false)); // Do not requeue
-        } finally {
-            console.log(`[Matcher-${CAMPAIGN_ID}] ⏳ Done processing batch.`);
-        }
-    };
-
-    // ✨ THE FIX: USE THE DYNAMIC ROUTING KEY ✨
-    const routingKey = `match.${CAMPAIGN_ID}`;
-
+    // ✅ Consume one message at a time. The batching logic is removed.
     await consumeFromCampaignQueue('match', CAMPAIGN_ID, async (msg) => {
         if (msg === null) return;
-        if (batchTimeout) clearTimeout(batchTimeout);
-        jobMessageBatch.push(msg);
 
-        if (jobMessageBatch.length >= BATCH_SIZE) {
-            await processBatch();
-        } else {
-            batchTimeout = setTimeout(processBatch, BATCH_TIMEOUT_MS);
+        // ✅ Process each message individually as it arrives.
+        const jobToProcess = JSON.parse(msg.content.toString());
+        console.log(`[Matcher-${CAMPAIGN_ID}] ⚙️ Processing job ID: ${jobToProcess.jobId}`);
+
+        try {
+            // Note: We pass the job inside an array to maintain compatibility
+            // with `matchJobsToResume` if it expects an array.
+            const isSuccess = await matchJobsToResume(jobToProcess);
+
+            if (isSuccess) {
+                console.log(`[Matcher-${CAMPAIGN_ID}] ✅ Job matched successfully. Acknowledging message.`);
+                channel.ack(msg);
+            } else {
+                console.warn(`[Matcher-${CAMPAIGN_ID}] ⚠️ Match failed for job. Requeueing message.`);
+                channel.nack(msg, false, true); // Requeue on logical failure
+            }
+        } catch (error) {
+            console.error(`[Matcher-${CAMPAIGN_ID}] ❌ Critical error during match. Rejecting job.`, error);
+            channel.nack(msg, false, false); // Do not requeue on critical error
+        } finally {
+            console.log(`[Matcher-${CAMPAIGN_ID}] ⏳ Done processing job.`);
         }
     });
 };

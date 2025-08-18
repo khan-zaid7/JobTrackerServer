@@ -4,7 +4,7 @@ import extractJobDetails from './jobDetailExtractor.js';
 import { ParseJobDetailsSummary } from './jobDetailsSummaryParser.js';
 import { hasNextPaginationPage, goToNextPaginationPage } from './paginationHandler.js';
 import ScrapedJob from '../../../models/ScrapedJob.js';
-import {getHourlyToken} from '../../../utils/humanUtils.js';
+import { getHourlyToken } from '../../../utils/humanUtils.js';
 /**
  * Slowly scroll the job detail card with randomized steps, simulating human reading.
  * @param {import('@playwright/test').Page} page
@@ -176,7 +176,7 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
                 processedJobIds.add(jobId);
                 continue;
             }
-            
+
             cardsProcessedInThisLoopIteration++;
 
             const box = await cardElement.boundingBox();
@@ -202,19 +202,21 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
                 await scrollJobDetailCard(page);
                 const jobData = await extractJobDetails(page);
 
-                // Parse job data in a summary file 
-                await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
+                if (jobData) {
+                    // Parse job data in a summary file 
+                    await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
 
-                // No change to saving the job
-                const savedJob = await ScrapedJob.saveJobIfNotExists({ ...jobData, createdBy: user._id, campaignId: campaignId  });
+                    // No change to saving the job
+                    const savedJob = await ScrapedJob.saveJobIfNotExists({ ...jobData, createdBy: user._id, campaignId: campaignId });
 
-                if (savedJob) {
-                    const newJobId = savedJob._id.toString();
-                    const routingKey = `match.${campaignId}`; // e.g., "match.campaign_123"
-                    const message = { jobId: newJobId, campaignId: campaignId };
+                    if (savedJob) {
+                        const newJobId = savedJob._id.toString();
+                        const routingKey = `match.${campaignId}`; // e.g., "match.campaign_123"
+                        const message = { jobId: newJobId, campaignId: campaignId };
 
-                    await publishToExchange(routingKey, message);
-                    console.log(`🚀 Published { jobId: ${newJobId} } with address "${routingKey}"`);
+                        await publishToExchange(routingKey, message);
+                        console.log(`🚀 Published { jobId: ${newJobId} } with address "${routingKey}"`);
+                    }
                 }
             } catch (error) {
                 console.log(`❌ Failed to load or scroll job detail for ID ${jobId}:`, error);
