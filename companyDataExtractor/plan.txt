@@ -1,0 +1,119 @@
+
+Project: The Company Context Blueprint Generator
+
+Objective
+Transform a company name into a structured JSON object containing a rich, actionable context blueprint for use in the resume tailoring pipeline.
+
+---
+
+Phase 1: Discovery & Targeting — Finding the Right Page
+
+Step 1: Ingestion
+- Input: A single clean company name.
+  Example: Lumenalta
+
+Step 2: Domain Identification
+- Perform an automated, programmatic search via a search engine API (Google, Bing, etc.).
+- Optimized search query:
+  "Lumenalta official website"
+  "Lumenalta careers"
+- Process:
+  1. Analyze top 3 search results.
+  2. Extract root domain from the most plausible URL.
+  3. Sanity check: ensure domain name closely matches the company name.
+- Output: lumenalta.com
+
+Step 3: “About Us” Page Location
+Two-pronged approach:
+
+Method A – Fast Path
+- Try common URL patterns:
+  https://lumenalta.com/about
+  https://lumenalta.com/about-us
+  https://lumenalta.com/company
+  https://lumenalta.com/our-mission
+- Select first URL with a valid 200 OK response.
+
+Method B – Robust Path
+- Search query:
+  site:lumenalta.com "about us" OR "our mission" OR "who we are"
+- Extract URL from top result.
+
+Fallback:
+- If both methods fail, use homepage (https://lumenalta.com).
+
+Output Example:
+https://lumenalta.com/about-us
+
+---
+
+Phase 2: Extraction & Cleaning — Getting the Raw Material
+
+Step 4: Intelligent Content Extraction
+- Use Playwright to launch a headless browser.
+- Navigate to Target URL from Step 3.
+- Run Mozilla Readability.js to:
+  - Strip non-essential elements (menus, ads, footers).
+  - Extract core “article” text.
+- Output: Clean HTML or plain text.
+
+Step 5: Sanity Check & Fallback
+- If extracted text < 500 characters:
+  - Assume Readability failed due to non-standard layout.
+  - Fallback: Extract entire <body> tag content (noisy).
+- Mark status as:
+  - "clean"
+  - "noisy"
+
+Output: Block of text + status flag.
+
+---
+
+Phase 3: Analysis & Synthesis — The AI’s Role
+
+Step 6: Prompt Engineering
+- Persona: "Senior Business Analyst and Research Strategist"
+- Goal: Analyze text about a company and produce structured JSON.
+- Constraints:
+  - Do not invent information.
+  - Only use data present in provided text.
+- Schema Definition:
+  {
+    "languageAndTone": "",
+    "coreValues": [],
+    "industryPositioning": "",
+    "recentDevelopments": [],
+    "culturalKeywords": []
+  }
+- Noise Handling:
+  If text contains menus, copyright notices, or unrelated content → mentally filter it.
+- Append extracted text from Step 5 to prompt.
+
+Step 7: AI Call & Validation
+- Send prompt to LLM (e.g., GPT-4o).
+- On response:
+  1. Parse output as JSON.
+  2. Validate against schema.
+  3. If parsing fails or schema mismatches → log error & stop.
+
+Output: Validated contextBlueprint JSON.
+
+---
+
+Phase 4: Enrichment & Finalization — Adding System Intelligence
+
+Step 8: Metadata Calculation
+- Completeness Score:
+  - Ratio of populated fields to total fields.
+- Information Tier:
+  > 0.8 = TIER_1_GOLD
+  > 0.4 = TIER_2_SILVER
+  else  = TIER_3_BRONZE
+
+Step 9: Final Object Assembly
+- Combine:
+  - Original input (companyName)
+  - Discovered data (websiteURL)
+  - AI-generated contextBlueprint
+  - Metadata (tier, score, warnings)
+- Final Output: Self-contained JSON object saved to database.

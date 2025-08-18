@@ -1,6 +1,6 @@
 import { createOrLoadSessionContext } from './createOrLoadSessionContext.js';
 import { clickJobsNav } from './navigateToJobs.js';
-import { performJobSearch } from './performJobSearch.js';
+import { performJobSearchByTitle, changeSearchLocation } from './performJobSearch.js';
 import { applyFilter } from './applyJobFilters.js';
 import { retrieveTotalJobCount } from './retrieveJobCount.js'; 
 import { processAllJobCardsWithScrolling } from './jobCardProcessor.js';
@@ -27,19 +27,19 @@ export async function runJobScraper(query = { search_term, location }, user, cam
         await clickJobsNav(page);
         console.log("Navigated to Jobs section.");
 
-        // 3. Perform initial job search
+        // 3a. Perform initial job search
         // This function uses existing selectors from your project (e.g., TITLE_INPUT, LOCATION_INPUT from pageLocator)
-        await performJobSearch(page, {
-            title: query.search_term,
-            location: query.location
-        });
+        await performJobSearchByTitle(page, query.search_term);
         console.log("Performed job search.");
+
+        // 3b. Perform the location change
+        await changeSearchLocation(page, query.location);
 
         // 4. Apply job filters
         // This function uses existing selectors from your project (e.g., FILTER_BUTTON, FILTER_OPTION_LOCATOR from pageLocator)
         await applyFilter(page, {
             "Date posted": 'Past 24 hours',
-            "Experience level": ['Entry level', 'Associate']
+            // "Experience level": ['Entry level', 'Associate']
         });
         console.log("Applied filters.");
 

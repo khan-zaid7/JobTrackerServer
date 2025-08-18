@@ -10,9 +10,9 @@ import {
 
 export async function applyFilter(page, options = {
     "Date posted": 'Past 24 hours',
-    "Experience level": ['Entry level', 'Associate']
+    // "Experience level": ['Entry level', 'Associate'] // <-- THIS LINE IS NOW COMMENTED OUT
   }) {
-  
+
   let counter = 1;
   for (const [key, value] of Object.entries(options)) {
     console.log("---------------------------------", counter);
@@ -22,9 +22,11 @@ export async function applyFilter(page, options = {
   }
 }
 
+// The filterFunction remains completely unchanged.
 const filterFunction = async (page, filterLabel, filterName) => {
   try {
-    console.log(`⚙️ Applying Date posted filter...`);
+    // Using dynamic logging as a small improvement
+    console.log(`⚙️ Applying filter "${filterLabel}"...`);
 
     await humanDelay(1000, 2500);
 
@@ -42,7 +44,6 @@ const filterFunction = async (page, filterLabel, filterName) => {
     await page.waitForSelector(ACTIVE_FILTER_MENU(), { timeout: 15000 });
     const activeFilterMenu = page.locator(ACTIVE_FILTER_MENU());
 
-    console.log(activeFilterMenu);
     await humanDelay(1000, 2000);
 
     const filterNames = Array.isArray(filterName) ? filterName : [filterName];
@@ -74,9 +75,9 @@ const filterFunction = async (page, filterLabel, filterName) => {
       await humanDelay(2000, 3000);
     }
 
-    console.log('✅ Date posted filter applied.');
+    console.log(`✅ Filter "${filterLabel}" applied.`);
   } catch (err) {
-    console.error('❌ Failed to apply Date posted filter:', err);
+    console.error(`❌ Failed to apply filter "${filterLabel}":`, err);
     throw err;
   }
 };

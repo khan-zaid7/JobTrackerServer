@@ -30,7 +30,11 @@ export async function createResumeDocument(tailoredResume, userId, job) {
   });
   if (!storage) throw new Error(`Storage not defined: ${storage}`);
 
-  const data = tailoredResume.tailoredSections;
+  // ✨ FIX: Parse the resume JSON from the 'tailoredText' field.
+  if (!tailoredResume.tailoredText) {
+    throw new Error('The tailoredResume object is missing the required "tailoredText" field.');
+  }
+  const data = JSON.parse(tailoredResume.tailoredText);
 
   // --- LaTeX generation helpers (no changes here) ---
   const escapeLatex = (str = '') => str.replace(/([&%$#_{}~^\\])/g, '\\$1');
@@ -180,7 +184,11 @@ ${data.Certifications.map(cert => {
 % --- HEADER ---
 \\begin{center}
   {\\fontsize{26pt}{30pt}\\bfseries\\color{primarycolor} ${escapeLatex(data.Header.fullName)}}
-  \\vspace{6pt}
+  
+  ${/* ✨ NEW: Conditionally add the Headline/Title ✨ */ ''}
+  ${data.Headline ? `\\vspace{4pt}\n{\\large\\itshape\\color{secondarycolor} ${escapeLatex(data.Headline)}}` : ''}
+  
+  \\vspace{8pt} % Increased space a little for better separation
   
   {\\color{secondarycolor} ${headerContactLine}}
 \\end{center}

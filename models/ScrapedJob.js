@@ -1,16 +1,29 @@
 import mongoose from 'mongoose';
 
 const ScrapedJobSchema = new mongoose.Schema({
+  // --- No changes to top-level fields ---
   title: { type: String, required: true },
   url: { type: String, required: true, unique: true },
   companyName: { type: String, required: true },
   location: { type: String },
   postedTime: { type: String },
+  
+  // ✅ UPDATED SECTION: The description field is now much more structured.
   description: {
+    roleOverview: {
+      title: { type: String, default: null },
+      company: { type: String, default: null },
+      summary: { type: String, default: null },
+      work_model: { type: String, default: null }
+    },
     responsibilities: { type: [String], default: [] },
-    qualifications: { type: [String], default: [] },
+    qualifications: {
+      required: { type: [String], default: [] },
+      desired: { type: [String], default: [] }
+    },
     benefits: { type: [String], default: [] }
   },
+  // --- No changes to other fields ---
   relatedReferences: {
     email: { type: String, default: null },
     phone: { type: String, default: null },
@@ -23,15 +36,36 @@ const ScrapedJobSchema = new mongoose.Schema({
   is_deleted: { type: Boolean, default: false },
   rejectionReason: { type: String, default: null },
   campaignId: { type: String, required: true, index: true },
-
-  // ✅ New field to link to Resume
   resumeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Resume', default: null }
 }, {
   timestamps: true
 });
 
-// Static method to save job if it does not exist for a specific user
+
 ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, options = {}) {
+  const {
+    // ... other fields are fine ...
+    description = {}, // The incoming description is now an object
+    // ... other fields are fine ...
+  } = jobDetails;
+
+  // ✅ UPDATED SECTION: Normalization logic now handles the new nested structure.
+  const normalizedDescription = {
+    roleOverview: {
+      title: description.roleOverview?.title || null,
+      company: description.roleOverview?.company || null,
+      summary: description.roleOverview?.summary || null,
+      work_model: description.roleOverview?.work_model || null
+    },
+    responsibilities: Array.isArray(description.responsibilities) ? description.responsibilities : [],
+    qualifications: {
+      required: Array.isArray(description.qualifications?.required) ? description.qualifications.required : [],
+      desired: Array.isArray(description.qualifications?.desired) ? description.qualifications.desired : []
+    },
+    benefits: Array.isArray(description.benefits) ? description.benefits : []
+  };
+
+  // The rest of the function remains the same, as it deals with top-level fields.
   const {
     title,
     url,
@@ -39,9 +73,8 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     campaignId,
     location = null,
     postedAt = null,
-    description = {},
     relatedReferences = {},
-    createdBy = null, // The user's ID
+    createdBy = null,
     batchId = null,
     isRelevant = false,
     is_deleted = false,
@@ -50,36 +83,26 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     resumeId = null
   } = jobDetails;
 
-  // Normalize description arrays
-  const normalizedDescription = {
-    responsibilities: Array.isArray(description.responsibilities) ? description.responsibilities : [],
-    qualifications: Array.isArray(description.qualifications) ? description.qualifications : [],
-    benefits: Array.isArray(description.benefits) ? description.benefits : []
-  };
-
   const normalizedReferences = {
     email: relatedReferences.email || null,
     phone: relatedReferences.phone || null,
     linkedin: relatedReferences.linkedin || null
   };
-
-  // ✅ FIX: Check for a duplicate based on both URL and the user who created it.
+  
   const existing = await this.findOne({ url, createdBy });
 
   if (existing) {
-    // The log message is now more accurate, as this is a duplicate for this specific user.
     console.log(`[User Duplicate Skipped] User ${createdBy} already saved: ${title} @ ${companyName}`);
-    return null; // Return null because the job already exists for this user
+    return null;
   }
 
-  // If no duplicate is found for the user, create and save the new job document.
   const jobDoc = new this({
     title,
     url,
     companyName,
     location,
     postedTime: postedAt,
-    description: normalizedDescription,
+    description: normalizedDescription, // Use the newly normalized description object
     relatedReferences: normalizedReferences,
     confidenceFactor,
     createdBy,
@@ -95,12 +118,10 @@ ScrapedJobSchema.statics.saveJobIfNotExists = async function (jobDetails, option
     await jobDoc.save();
     return jobDoc;
   } catch (e) {
-    // This handles potential race conditions if a database-level unique index is violated.
     if (e.code === 11000) {
       console.log(`[Mongo Duplicate] A race condition occurred. The job at ${url} was saved by user ${createdBy} just now.`);
       return null;
     }
-    // Re-throw other types of errors.
     throw e;
   }
 };
