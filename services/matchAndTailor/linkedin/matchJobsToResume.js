@@ -240,7 +240,7 @@ console.log(JSON.stringify(blueprint, null, 2));
  * Processes a single job against a user's master resume.
  * @param {object} jobToProcess A message object from the queue, containing jobId and campaignId.
  */
-export const matchJobsToResume = async (jobToProcess) => {
+export const matchJobsToResume = async (jobToProcess, channel) => {
   try {
     if (!jobToProcess || !jobToProcess.jobId) {
       console.log('[Matcher Service] Received an invalid job payload. Nothing to do.');
@@ -248,7 +248,7 @@ export const matchJobsToResume = async (jobToProcess) => {
     }
 
     // --- STEP 1: EXTRACT MISSION-CRITICAL DATA ---
-    const { jobId, campaignId } = jobToProcess;
+    const { jobId, campaignId, resumeId } = jobToProcess;
     if (!campaignId) {
       throw new Error(`FATAL: campaignId is missing for job ${jobId}.`);
     }
@@ -270,7 +270,6 @@ export const matchJobsToResume = async (jobToProcess) => {
     const user = scrapedJob.createdBy;
     const userId = user._id;
 
-    const resumeId = process.env.RESUME_ID;
     const resume = await Resume.findOne({ _id: resumeId, createdBy: userId });
 
     if (!resume) {
@@ -307,13 +306,13 @@ export const matchJobsToResume = async (jobToProcess) => {
       try {
         console.log(`--- Calling AI for Job ${jobId}, Attempt ${attempt} ---`);
         const inferredPriorities = await inferJobPriorities(scrapedJob.description);
-        
+
         finalJobBlueprint = {
           ...scrapedJob.description,
           ...inferredPriorities // This adds the "priorities" key to the object
         };
 
-        aiResponse = await callDeepSeekReasonerAPI(
+        aiResponse = await callAIAPI(
           buildSystemPrompt(),
           // Pass the structured resume summary and the job description object
           buildUserPrompt({ description: finalJobBlueprint, resume_summary: resumeSummary }),
@@ -339,7 +338,7 @@ export const matchJobsToResume = async (jobToProcess) => {
     // console.log(JSON.stringify(scrapedJob.description));
     // console.log(JSON.stringify(resumeSummary));
     // console.log(JSON.stringify(finalJobBlueprint));
-    // console.log(JSON.stringify(aiResponse));
+    console.log(JSON.stringify(aiResponse));
     // console.log('\n\n')
 
     const { recommendation, verdict } = aiResponse;
@@ -378,14 +377,19 @@ export const matchJobsToResume = async (jobToProcess) => {
     if (positiveDecisions.includes(hireDecision)) {
       console.log(`[Matcher Service] AI decision is positive. Publishing for tailoring.`);
 
-      const routingKey = `tailor.${campaignId}`;
-      const message = {
-        matchedPairId: newPair._id.toString(),
-        campaignId: campaignId
-      };
-
-      await publishToExchange(routingKey, message);
-      console.log(`[Matcher Service] 🚀 Published MatchedPair ${newPair._id} to exchange with address "${routingKey}"`);
+      const TAILOR_QUEUE_NAME = 'jobs.tailor';
+      // The message contains the mission for the next worker.
+      const tailorMessage = { jobId: jobId, matchedPairId: newPair._id, campaignId: campaignId, resumeId: resumeId };
+      // Ensure the queue exists before sending to it.
+      await channel.assertQueue(TAILOR_QUEUE_NAME, { durable: true });
+      // Send the new job to the central tailor queue.
+      channel.sendToQueue(
+        TAILOR_QUEUE_NAME,
+        Buffer.from(JSON.stringify(tailorMessage)),
+        { persistent: true }
+      );
+      console.log(`[Matcher-Worker] 🚀 Sent Job ${jobId} to the central tailor queue: "${TAILOR_QUEUE_NAME}".`);
+      // console.log(`[Matcher Service] 🚀 Published MatchedPair ${newPair._id} to exchange with address "${routingKey}"`);
 
     } else {
       // For 'REJECT' decisions, we have already saved the report. Our work is done.

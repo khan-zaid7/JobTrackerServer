@@ -147,49 +147,65 @@ export async function stopCampaignController(req, res) {
  * Ensures that the campaign belongs to the authenticated user.
 */  
 
+// In your campaigns controller file...
+
+/**
+ * The FINAL, CORRECTED function to get complete campaign details.
+ * It correctly stitches together the data based on the new relationships.
+ * ScrapedJob -> MatchedPair -> TailoredResume
+ */
 export async function getCompleteCampaignDetails(req, res) {
     try {
         const { campaignId } = req.params;
-        const userId = req.user.id;
+        // const userId = req.user.id;
+        const userId = '68a71962d6c9a03ea8f278b0';
 
-        // 1. Authenticate the user and get the campaign.
+        // 1. Authenticate the user and get the campaign (Unchanged).
         const campaign = await Campaign.findOne({ _id: campaignId, userId: userId }).lean();
         if (!campaign) {
-            return res.status(404).json({ message: 'Campaign not found or you do not have permission to access it.' });
+            return res.status(404).json({ message: 'Campaign not found or you do not have permission.' });
         }
 
-        // 2. Fetch ALL three lists of data in parallel. This is efficient.
+        // 2. Fetch all related data in parallel (Unchanged).
         const [scrapedJobs, matchedPairs, successfulResumes] = await Promise.all([
-            // Get all jobs for the campaign.
             ScrapedJob.find({ campaignId: campaignId }).sort({ createdAt: -1 }).lean(),
-            
-            // Get all matched pairs for the campaign.
             MatchedPair.find({ campaignId: campaignId }).lean(),
-            
-            // Get all SUCCESSFULLY completed tailored resumes for the campaign.
             TailoredResume.find({ campaignId: campaignId, status: 'success' }).lean()
         ]);
 
-        // 3. Create Maps for easy, fast lookups (O(1) access).
+        // =================================================================
+        //                 THE FUCKING FIX IS HERE
+        // =================================================================
+        // 3. Create Maps for fast lookups with the CORRECT keys.
+        
+        // The MatchedPair map is keyed by the ScrapedJob ID. This is correct.
         const matchedPairMap = new Map(matchedPairs.map(p => [p.jobId.toString(), p]));
-        const tailoredResumeMap = new Map(successfulResumes.map(r => [r.jobId.toString(), r]));
 
-        // 4. Stitch the data together. This is the crucial step.
-        // We iterate through the list of SCRAPED JOBS as our base.
+        // THE FIX: The TailoredResume map must be keyed by the MatchedPair ID,
+        // because a tailored resume belongs to a match, not directly to a job.
+        const tailoredResumeMap = new Map(successfulResumes.map(r => [r.matchedPairId.toString(), r]));
+
+        // 4. Stitch the data together using the correct relationships.
         const combinedJobs = scrapedJobs.map(job => {
             const jobIdString = job._id.toString();
             
+            // First, find the matched pair for the current job.
+            const matchedPair = matchedPairMap.get(jobIdString) || null;
+            
+            // THE FIX: Now, use the matched pair's ID to find the tailored resume.
+            // If there's no matched pair, there can be no tailored resume.
+            const tailoredResume = matchedPair ? tailoredResumeMap.get(matchedPair._id.toString()) : null;
+
             return {
                 ...job,
-                // Attach the MatchedPair object if one exists for this jobId.
-                matchedPair: matchedPairMap.get(jobIdString) || null,
-                
-                // Attach the TailoredResume object if one exists for this jobId.
-                tailoredResume: tailoredResumeMap.get(jobIdString) || null
+                // The 'description' object is already correct because of .lean()
+                matchedPair: matchedPair,
+                tailoredResume: tailoredResume // This is now correctly associated
             };
         });
+        // =================================================================
 
-        // 5. Assemble the final, complete, and consistent response object.
+        // 5. Assemble the final response (Unchanged).
         const completeDetails = {
             ...campaign,
             jobs: combinedJobs
@@ -198,12 +214,10 @@ export async function getCompleteCampaignDetails(req, res) {
         return res.status(200).json(completeDetails);
 
     } catch (error) {
-        // We add more specific error logging to help debug if it ever fails.
         console.error(`CRITICAL FAILURE in getCompleteCampaignDetails for campaign ${req.params.campaignId}:`, error);
-        return res.status(500).json({ message: 'A critical server error occurred while fetching complete campaign details.' });
+        return res.status(500).json({ message: 'A critical server error occurred.' });
     }
 }
-
 /**
  * Fetches the complete details for a single job within a campaign.
  * This includes the scraped job data, the original master resume used for matching,

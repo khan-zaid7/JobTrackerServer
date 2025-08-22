@@ -4,7 +4,9 @@ import jwt from 'jsonwebtoken';
 
 import User from '../models/User.js';
 import auth from '../middleware/auth.js';
+import dotenv from 'dotenv';
 
+dotenv.config();
 const router = express.Router();
 
 // Register
@@ -24,10 +26,13 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
+    console.log(user);
+    console.log(await bcrypt.compare(password, user.password))
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Invalid Credentials' });
     }
 
+    console.warn("saying somehting?",process.env.JWT_SECRET);
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
     res.json({ token, user: { name: user.name, email: user.email } });
   } catch (err) {

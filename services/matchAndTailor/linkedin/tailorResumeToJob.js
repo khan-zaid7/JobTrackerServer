@@ -97,7 +97,7 @@ const createResumeHeader = async (resumeSummary, jobDescriptionSummary, jobToRes
       "Title": "*Your generated targeting headline here*",
       "Summary": {
         "paragraphs": [
-          "Your single, powerful summary sentence here."
+          "Your single, powerful summary sentence here. (Max upto 45 words only)"
         ]
       }
     }

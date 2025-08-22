@@ -1,0 +1,9 @@
+# .dockerignore
+
+# Ignore the local dependencies, we install them inside the container.
+node_modules
+
+# Ignore logs and git files
+npm-debug.log
+.git
+.env

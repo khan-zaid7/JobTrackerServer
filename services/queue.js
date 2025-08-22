@@ -15,7 +15,6 @@ export async function connectToQueue() {
         connection = await amqp.connect(RABBITMQ_URL);
         channel = await connection.createChannel();
 
-        // ✨ THE FIX: USE A 'direct' EXCHANGE FOR PRECISE ROUTING. ✨
         // This allows us to use routing keys as addresses.
         await channel.assertExchange(PIPELINE_EXCHANGE, 'topic', { durable: true });
 

@@ -1,10 +1,11 @@
-import { publishToExchange } from '../../queue.js';
+import { getChannel } from '../../queue.js';
 import { selectors } from '../../../config/pageLocators.js';
 import extractJobDetails from './jobDetailExtractor.js';
 import { ParseJobDetailsSummary } from './jobDetailsSummaryParser.js';
 import { hasNextPaginationPage, goToNextPaginationPage } from './paginationHandler.js';
 import ScrapedJob from '../../../models/ScrapedJob.js';
-import { getHourlyToken } from '../../../utils/humanUtils.js';
+import Campaign from '../../../models/Campaign.js';
+
 /**
  * Slowly scroll the job detail card with randomized steps, simulating human reading.
  * @param {import('@playwright/test').Page} page
@@ -146,7 +147,7 @@ async function aggressiveJobListScroll(page) {
  * Processes all visible job cards and scrolls to load more as needed.
  * @param {import('@playwright/test').Page} page
  */
-export async function processAllJobCardsWithScrolling(page, user, campaignId) {
+export async function processAllJobCardsWithScrolling(page, user, campaignId, resumeId) {
     if (!campaignId) {
         throw new Error("FATAL: campaignId is missing. Scraper cannot publish to the correct address.");
     }
@@ -157,12 +158,20 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
     const MAX_NO_NEW_UNPROCESSED_CARDS_ATTEMPTS = 5;
 
     while (true) {
+
+
         const currentJobCardElements = await page.locator(selectors.jobCardLi).elementHandles();
         console.log(`Found ${currentJobCardElements.length} job cards in view.`);
 
         let cardsProcessedInThisLoopIteration = 0;
 
         for (const [index, cardElement] of currentJobCardElements.entries()) {
+            let campaign = await Campaign.findById(campaignId).select('status').lean();
+            if (campaign.status === 'stopped') {
+                console.log(`[Scraper Orchestrator] Campaign ${campaignId} stopped before work began. Exiting.`);
+                return;
+            }
+
             const jobId = await cardElement.getAttribute('data-occludable-job-id');
             if (!jobId || processedJobIds.has(jobId)) continue;
 
@@ -208,14 +217,21 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
 
                     // No change to saving the job
                     const savedJob = await ScrapedJob.saveJobIfNotExists({ ...jobData, createdBy: user._id, campaignId: campaignId });
-
+                    // In the scraper, after a job is saved...
                     if (savedJob) {
                         const newJobId = savedJob._id.toString();
-                        const routingKey = `match.${campaignId}`; // e.g., "match.campaign_123"
-                        const message = { jobId: newJobId, campaignId: campaignId };
+                        const MATCH_QUEUE_NAME = 'jobs.match'; // The central "taxi stand"
+                        const message = { jobId: newJobId, campaignId: campaignId, resumeId: resumeId }; // The mission is INSIDE the message
 
-                        await publishToExchange(routingKey, message);
-                        console.log(`🚀 Published { jobId: ${newJobId} } with address "${routingKey}"`);
+                        // Use sendToQueue, not publishToExchange, for this step.
+                        const channel = getChannel(); // Assuming you have getChannel() available
+                        await channel.assertQueue(MATCH_QUEUE_NAME, { durable: true });
+                        channel.sendToQueue(
+                            MATCH_QUEUE_NAME,
+                            Buffer.from(JSON.stringify(message)),
+                            { persistent: true }
+                        );
+                        console.log(`🚀 Sent job ${newJobId} to the central matching queue.`);
                     }
                 }
             } catch (error) {
