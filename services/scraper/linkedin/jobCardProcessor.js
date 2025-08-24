@@ -205,37 +205,54 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId, re
 
             console.log(`📄 Clicked job card #${index + 1} (id=${jobId}) at (${Math.round(centerX)}, ${Math.round(centerY)})`);
 
+            // Corrected block for your `for` loop
             try {
                 await page.waitForSelector(selectors.jobDetailCard, { timeout: 7000 });
                 await page.waitForTimeout(1500 + Math.random() * 1500);
                 await scrollJobDetailCard(page);
-                const jobData = await extractJobDetails(page);
 
-                if (jobData) {
-                    // Parse job data in a summary file 
-                    await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
+                // 1. Extract and Parse the data in one step
+                // extractJobDetails ALREADY contains your AI call (ParseJobDetailsSummary)
+                const structuredJobData = await extractJobDetails(page);
 
-                    // No change to saving the job
-                    const savedJob = await ScrapedJob.saveJobIfNotExists({ ...jobData, createdBy: user._id, campaignId: campaignId });
-                    // In the scraper, after a job is saved...
+                if (structuredJobData) {
+                    // 2. Save the STRUCTURED data to the database
+                    const savedJob = await ScrapedJob.saveJobIfNotExists({
+                        ...structuredJobData, // Use the complete, structured data from the AI
+                        createdBy: user._id,
+                        campaignId: campaignId
+                    });
+
+                    console.warn(`saved JOb: ${savedJob}`)
+                    console.warn(`saved JOb: ${ savedJob._id.toString()}`)
+
                     if (savedJob) {
                         const newJobId = savedJob._id.toString();
-                        const MATCH_QUEUE_NAME = 'jobs.match'; // The central "taxi stand"
-                        const message = { jobId: newJobId, campaignId: campaignId, resumeId: resumeId }; // The mission is INSIDE the message
+                        const MATCH_QUEUE_NAME = 'jobs.match';
 
-                        // Use sendToQueue, not publishToExchange, for this step.
-                        const channel = getChannel(); // Assuming you have getChannel() available
+                        // 3. THE FIX: Construct the COMPLETE message payload
+                        // Combine the IDs AND the structured job data
+                        const message = {
+                            ...structuredJobData, // Spread the AI-parsed job details
+                            jobId: newJobId,      // Add the MongoDB job ID
+                            campaignId: campaignId,
+                            resumeId: resumeId
+                        };
+
+                        const channel = getChannel();
                         await channel.assertQueue(MATCH_QUEUE_NAME, { durable: true });
+
+                        // 4. Send the complete and correct message
                         channel.sendToQueue(
                             MATCH_QUEUE_NAME,
                             Buffer.from(JSON.stringify(message)),
                             { persistent: true }
                         );
-                        console.log(`🚀 Sent job ${newJobId} to the central matching queue.`);
+                        console.log(`🚀 Sent COMPLETE job data for ${newJobId} to the central matching queue.`);
                     }
                 }
             } catch (error) {
-                console.log(`❌ Failed to load or scroll job detail for ID ${jobId}:`, error);
+                console.log(`❌ Failed to load or process job detail for ID ${jobId}:`, error);
             }
 
             if (index + 1 < currentJobCardElements.length) {

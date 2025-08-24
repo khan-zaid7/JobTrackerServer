@@ -109,53 +109,87 @@ const summarizeResume = async (resumeText) => {
  * @throws {Error} If the AI API call fails or the analysis cannot be completed.
  */
 const inferJobPriorities = async (description) => {
-  console.log('Inferring hiring priorities from job description...');
+  console.log('Step 1: Analyzing Job Description to create a Hiring Blueprint...');
 
-  // System prompt to set the AI's role and context.
+  // The system prompt now explains the AI's role in the larger two-step strategy.
   const systemPrompt = `
-    You are an expert Senior Technical Recruiter. Your task is to analyze a standard job description and infer the hiring manager's priorities for the role. Based on the language, placement of requirements (e.g., "Required" vs. "Desired"), and the core function of the role, you must generate a JSON object that assigns a 'High', 'Medium', or 'Low' priority to a predefined set of evaluation criteria.
+    You are an expert AI Hiring Analyst. Your specific task is to build a "Hiring Blueprint" from a job description.
+
+    This blueprint is the crucial first step in a two-part hiring process. It will be used by a separate AI to filter and evaluate candidates. Therefore, your analysis must be precise and clearly distinguish between absolute, non-negotiable requirements and other preferences. Your output is the rulebook that the next AI must follow.
   `.trim();
 
-  // User prompt with detailed instructions, the required output format, and the job description data.
+  // The user prompt specifies the new, more precise output format.
   const userPrompt = `
-    Read the entire Job Description carefully. Pay attention to:
-    - Explicit sections like "Required Qualifications" vs. "Desired Qualifications".
-    - Strong keywords like "expert knowledge", "must have", "play a key role".
-    - The job title itself (e.g., "Senior" implies seniority is important).
-    - The frequency and emphasis of certain responsibilities.
+    Analyze the provided structured job description. For each category, you will infer the hiring manager's true priority.
 
-    Produce a JSON object with two keys:
-    1. \`priorities\`: The inferred priority levels for each of the 11 categories.
-    2. \`justification\`: A brief explanation for each priority choice, referencing the text from the job description.
+    You must classify each requirement's priority using one of these four levels:
+    - "Non-Negotiable": A hard requirement. A candidate's failure to meet this is a deal-breaker (e.g., minimum years of experience, specific location/work authorization).
+    - "Core Requirement": A central skill for the job. The candidate must be strong here, but exceptional, transferable skills could be considered (e.g., the main programming language).
+    - "Strongly Preferred": A "nice-to-have" skill that separates good candidates from great ones. Lack of this is not a blocker.
+    - "Low Priority / Standard": A standard expectation (e.g., "team player") or a factor that is not a primary screening criterion.
+
+    Produce a JSON object where each key is a category, and the value is another object containing:
+    1. \`level\`: Your classification from the four levels above.
+    2. \`justification\`: A brief explanation for your choice, referencing the job description.
+    3. \`requirement_summary\`: A concise summary or direct quote of the specific requirement from the job description. State "Not explicitly mentioned" if absent.
 
     This is the exact JSON output format you must follow:
     \`\`\`json
     {
-      "priorities": {
-        "experience_gap": "High/Medium/Low",
-        "domain_alignment": "High/Medium/Low",
-        "frontend_expectations": "High/Medium/Low",
-        "backend_tech_match": "High/Medium/Low",
-        "devops_and_ci_cd": "High/Medium/Low",
-        "seniority_and_autonomy": "High/Medium/Low",
-        "soft_skills_culture_fit": "High/Medium/Low",
-        "location_and_availability": "High/Medium/Low",
-        "growth_potential": "High/Medium/Low",
-        "compensation_expectations": "High/Medium/Low",
-        "cultural_vibe_match": "High/Medium/Low"
+      "experience_gap": {
+        "level": "Non-Negotiable",
+        "requirement_summary": "5+ years of software engineering experience",
+        "justification": "The JD lists '5+ years' in the required qualifications, making it a minimum bar for seniority."
       },
-      "justification": {
-        "experience_gap": "Reasoning based on JD text.",
-        "domain_alignment": "Reasoning based on JD text.",
-        "frontend_expectations": "Reasoning based on JD text.",
-        "backend_tech_match": "Reasoning based on JD text.",
-        "devops_and_ci_cd": "Reasoning based on JD text.",
-        "seniority_and_autonomy": "Reasoning based on JD text.",
-        "soft_skills_culture_fit": "Reasoning based on JD text.",
-        "location_and_availability": "Reasoning based on JD text.",
-        "growth_potential": "Reasoning based on JD text.",
-        "compensation_expectations": "Reasoning based on JD text.",
-        "cultural_vibe_match": "Reasoning based on JD text."
+      "domain_alignment": {
+        "level": "Strongly Preferred",
+        "requirement_summary": "Experience in e-commerce or retail tech.",
+        "justification": "Mentioned as a 'plus' but not in the core requirements, so it's a bonus, not a blocker."
+      },
+      "frontend_expectations": {
+        "level": "Low Priority / Standard",
+        "requirement_summary": "Not explicitly mentioned.",
+        "justification": "The role is described as purely backend, so frontend skills are not a priority."
+      },
+      "backend_tech_match": {
+        "level": "Core Requirement",
+        "requirement_summary": "Expertise in Go and microservices architecture.",
+        "justification": "Go is the primary language mentioned in the role title and required qualifications."
+      },
+      "devops_and_ci_cd": {
+        "level": "Strongly Preferred",
+        "requirement_summary": "Experience with AWS, Docker, and Kubernetes.",
+        "justification": "Listed in the 'desired' qualifications, indicating it's highly valued but not a hard requirement for day one."
+      },
+      "seniority_and_autonomy": {
+        "level": "Core Requirement",
+        "requirement_summary": "Ability to lead projects and mentor junior engineers.",
+        "justification": "The 'Senior' title and responsibilities imply leadership and independence are key expectations."
+      },
+      "soft_skills_culture_fit": {
+        "level": "Low Priority / Standard",
+        "requirement_summary": "Strong communication and collaboration skills.",
+        "justification": "These are standard professional expectations best assessed in an interview, not for initial filtering."
+      },
+      "location_and_availability": {
+        "level": "Non-Negotiable",
+        "requirement_summary": "Hybrid, based in London, UK.",
+        "justification": "Specific location and work model are typically firm legal and logistical requirements."
+      },
+      "growth_potential": {
+        "level": "Low Priority / Standard",
+        "requirement_summary": "Not applicable for screening.",
+        "justification": "This concerns the role's fit for the candidate, not a criterion to filter them on."
+      },
+      "compensation_expectations": {
+        "level": "Non-Negotiable",
+        "requirement_summary": "Not explicitly mentioned.",
+        "justification": "Though not in the JD, compensation alignment is a non-negotiable checkpoint for any real-world hiring process."
+      },
+      "cultural_vibe_match": {
+        "level": "Strongly Preferred",
+        "requirement_summary": "Thrives in a fast-paced environment.",
+        "justification": "Cultural fit is important for retention but is a preference, not a hard skill to screen for on a resume."
       }
     }
     \`\`\`
@@ -168,74 +202,75 @@ const inferJobPriorities = async (description) => {
   try {
     // This assumes you have a 'callAIAPI' function similar to the one in your example.
     const prioritiesBlueprint = await callAIAPI(systemPrompt, userPrompt);
-    console.log('✅ Job priorities blueprint created successfully.');
+    console.log('✅ Hiring Blueprint created successfully.');
     return prioritiesBlueprint;
   } catch (error) {
-    console.error('❌ Failed to create the job priorities blueprint.', error);
+    console.error('❌ Failed to create the Hiring Blueprint.', error);
     throw new Error('The job description could not be analyzed for its priorities. Please check its content and try again.');
   }
 };
 
+const applyCandidateFlexibility = (originalBlueprint) => {
+  // Create a deep copy to avoid modifying the original object
+  const modifiedBlueprint = JSON.parse(JSON.stringify(originalBlueprint));
 
-const blueprint = await summarizeResume(`ZAID KHAN 
-khan.mohd.zaid@protonmail.com | 416-826-5259 | linkedin.com/in/khan
-zaid7 | github.com/khan-zaid7 
-SUMMARY 
-Process Automation Engineer specializing in building scalable, AI-driven platforms to 
-eliminate manual work and optimize complex business operations. Adept at transforming 
-high-level requirements into robust, full-stack applications with a focus on API integration 
-and backend system architecture. 
-PROJECTS 
-Full-Stack Resume Tailoring & Job Application Pipeline  
-• Architected a distributed, multi-worker system using Node.js and RabbitMQ to 
-automate the entire job application lifecycle, from scraping job boards to generating 
-tailored resumes. 
-• Engineered a sophisticated two-pass AI prompting strategy with DeepSeek/OpenAI 
-to analyze job descriptions, identify skill gaps, and rewrite resume content to align 
-with specific roles. 
-• Containerized the entire application stack (Scraper, Matcher, Tailor workers) 
-using Docker and orchestrated the local development environment with Docker 
-Compose, including services for MongoDB and RabbitMQ. 
-• Implemented a PDF generation module using LaTeX, automatically compiling and 
-uploading the final, tailored documents to Google Cloud Storage. 
-Ember Core – Offline-First Mobile Data Synchronization Platform 
-• Developed a resilient mobile application architecture using React 
-Native and SQLite that guarantees full functionality during network outages. 
-• Engineered a bidirectional data synchronization system with Firebase 
-Firestore and Node.js, featuring robust conflict resolution to ensure data integrity 
-between local devices and the cloud. 
-EXPERIENCE 
-Software Developer | Cybertron Technologies | Chandigarh, IN | Dec 2021 - Nov 2023 
-• Productized a suite of internal process automation tools using React, Django, and 
-Node.js, saving an estimated 20 man-hours per week by eliminating manual data 
-entry and report generation. 
-• Architected and deployed secure RESTful APIs that served as the backbone for real
-t
- ime data integration across multiple business-critical applications. 
-• Led the optimization of PostgreSQL databases, improving query performance by 
-over 35% and enhancing system reliability for data-intensive applications. 
-• Engineered the CI/CD pipeline using GitHub Actions, reducing deployment time by 
-40% and enabling faster iteration cycles for the development team. 
-• Managed cloud infrastructure on AWS using Terraform and Docker, ensuring 
-scalable and repeatable deployments. 
-SKILLS 
-• Languages: JavaScript (Node.js), Python, Java, C# 
-• Backend: Express, Django, REST API Design, Microservices Architecture, RabbitMQ 
-• Frontend: React.js, Next.js, Vue, Tailwind CSS 
-• Databases: PostgreSQL, MongoDB, MySQL, DynamoDB, SQLite 
-• Cloud & DevOps: AWS (EC2, S3, Lambda), Docker, Terraform, CI/CD, GitHub Actions 
-• AI & Automation: AI Prompt Engineering, Playwright, LaTeX 
-EDUCATION 
-Lambton College | Postgraduate Diploma, Full Stack Software Development | Jan 2024 – 
-Aug 2025 (Expected) 
-• Relevant Coursework: DevOps, Cloud Computing, Advanced Java 
-I.K. Gujral Punjab Technical University | Bachelor of Science, Information Technology | Aug 
-2019 – Apr 2022 
-• Relevant Coursework: Data Structures & Algorithms, Object-Oriented Programming, 
-SQL Databases `);
+  // Find the location rule
+  if (modifiedBlueprint.location_and_availability) {
+    console.log(`[Flexibility Override] Downgrading 'location_and_availability' from '${modifiedBlueprint.location_and_availability.level}' to 'Strongly Preferred'.`);
 
-// The 'null, 2' part tells it to format the JSON with an indentation of 2 spaces
-console.log(JSON.stringify(blueprint, null, 2));
+    // Forcefully downgrade the priority level.
+    // This tells the AI: "This is a preference, not a deal-breaker. Use your judgment."
+    modifiedBlueprint.location_and_availability.level = "Strongly Preferred";
+  }
+
+  return modifiedBlueprint;
+};
+
+/**
+ * Manually injects a location and work model flexibility statement into a structured resume object.
+ * This is a pre-processing step to ensure the matching AI correctly interprets the candidate's preferences.
+ *
+ * @param {object} resumeData - The structured resume JSON, matching the expected blueprint.
+ * @returns {object} The modified resume JSON with the flexibility statement added.
+ */
+const addFlexibilityStatementToResume = (resumeData) => {
+  // Ensure we have valid data to work with. If not, return it unchanged.
+  if (!resumeData || !resumeData.candidate) {
+    console.warn("[Flexibility Injector] Invalid or empty resume data received. Returning as is.");
+    return resumeData;
+  }
+
+  // Define the clear, powerful statement you want to add.
+  const flexibilityStatement = "Fully flexible and open to relocation for remote, hybrid, or on-site roles globally.";
+
+  // --- Injection Point 1: The Contact Section (for structured data and keyword matching) ---
+
+  // Ensure the contact object exists before trying to add to it.
+  if (!resumeData.candidate.contact) {
+    resumeData.candidate.contact = {};
+  }
+
+  // Add a new, explicit field for availability. This is great for the AI's logical reasoning.
+  resumeData.candidate.contact.availability_statement = flexibilityStatement;
+  console.log("[Flexibility Injector] Added 'availability_statement' to contact info.");
+
+
+  // --- Injection Point 2: The Summary Section (for narrative context) ---
+
+  // Check if a summary already exists to append to it, otherwise create it.
+  if (resumeData.candidate.summary && resumeData.candidate.summary.trim() !== '') {
+    // Append to the existing summary for a natural feel.
+    resumeData.candidate.summary += ` ${flexibilityStatement}`;
+    console.log("[Flexibility Injector] Appended flexibility statement to existing summary.");
+  } else {
+    // If there's no summary, this statement is important enough to become the summary.
+    resumeData.candidate.summary = flexibilityStatement;
+    console.log("[Flexibility Injector] Set summary to the flexibility statement as it was empty.");
+  }
+
+  return resumeData;
+};
+
 /**
  * Processes a single job against a user's master resume.
  * @param {object} jobToProcess A message object from the queue, containing jobId and campaignId.
@@ -299,24 +334,22 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
       resumeSummary = newSummary;
     }
 
+    let modifiedResumeSummary = addFlexibilityStatementToResume(resumeSummary);
     let aiResponse;
-    let finalJobBlueprint;
     // Simple retry logic for the AI call
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         console.log(`--- Calling AI for Job ${jobId}, Attempt ${attempt} ---`);
         const inferredPriorities = await inferJobPriorities(scrapedJob.description);
 
-        finalJobBlueprint = {
-          ...scrapedJob.description,
-          ...inferredPriorities // This adds the "priorities" key to the object
-        };
+        // 2. Apply your candidate's flexibility override
+        const modifiedBlueprint = applyCandidateFlexibility(inferredPriorities);
 
         aiResponse = await callAIAPI(
           buildSystemPrompt(),
           // Pass the structured resume summary and the job description object
-          buildUserPrompt({ description: finalJobBlueprint, resume_summary: resumeSummary }),
-          { model: 'gpt-4.1-mini' } // A powerful model is needed for this level of analysis
+          buildUserPrompt({ description: scrapedJob.description, resume_summary: modifiedResumeSummary, hiring_priorities: modifiedBlueprint }),
+          { model: 'gpt-4.1-mini' }
         );
         // A new, more robust check for the new output format
         if (aiResponse && aiResponse.recommendation && aiResponse.recommendation.hire_decision) {
@@ -415,19 +448,14 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
  */
 const buildSystemPrompt = () => {
   return `
-    You are a world-class elite hiring recruiter at a multi-national unicorn company. 
-    You are given a JSON blueprint of a job description and a candidate's resume. 
-    Your role is to think like a real recruiter would in a hiring meeting.
+    You are a world-class elite hiring recruiter at a multi-national unicorn company, given a candidate's resume, a job description, and a crucial **Hiring Priorities Blueprint**.
 
-    - Go beyond keywords. Read the story of the candidate: who they are, what they bring, and the overall vibe they project.  
-    - Evaluate both strengths and weaknesses, but in a narrative style, not just bullet points.  
-    - Imagine explaining to your colleagues why this candidate excites you or why you have reservations.  
-    - Identify potential deal-breakers (e.g., missing critical skills, lacking required language proficiency, insufficient experience), but also weigh whether adaptability, fast learning, or potential could compensate.  
-    - Highlight the candidate’s strongest qualities, cultural fit (including verbal language barrier), and how they might perform in an interview.  
-    - Don’t reject someone just because they’re not 100% perfect — assess tradeoffs, potential, and competitiveness.  
-    - Trust your professional instincts. Be honest, balanced, and human in your judgment.  
+    Your role is to act as a pragmatic and data-driven talent evaluator. Your primary guide is the Hiring Blueprint, which defines the non-negotiable and core requirements for the role. Your professional judgment and intuition should be used to evaluate the candidate *within the boundaries set by the blueprint*.
 
-  Make sure your reasoning feels like a thoughtful recruiter’s voice, not just a checklist.
+    - **Blueprint is Law:** You MUST treat any requirement marked as "Non-Negotiable" in the blueprint as a hard filter. No amount of "potential" can override a non-negotiable mismatch.
+    - **Evaluate Core Skills:** For "Core Requirements," use your expertise to assess the candidate's strength, including the value of their transferable skills. This is where you analyze their story and potential.
+    - **Narrative Judgment:** Frame your reasoning as if you're in a hiring meeting, but ground your arguments in the evidence from the resume and the rules from the blueprint.
+    - **Balance, Not Exceptions:** Be balanced and human, but do not create exceptions for non-negotiable items. Your job is to find the best talent that meets the foundational requirements. Your credibility with your hiring manager depends on it.
   `.trim();
 };
 
@@ -436,7 +464,7 @@ const buildSystemPrompt = () => {
 /**
  * Builds the user prompt with the single job and structured resume summary.
  */
-const buildUserPrompt = (description, resume_summary) => {
+const buildUserPrompt = (description, resume_summary, hiring_priorities) => {
   return `
     Once you are done with your analysis, you have to provide a detailed summary of various infromation, why or why not the candidate is suitable for the job to be later used by tailoring resume AI to tailor the resume in the JSON format below. 
 
@@ -526,5 +554,8 @@ const buildUserPrompt = (description, resume_summary) => {
 
     Candidate Resume Blueprint:
     ${JSON.stringify(resume_summary, null, 2)}
+
+    Candidate Resume Blueprint:
+    ${JSON.stringify(hiring_priorities, null, 2)}
   `.trim();
 };

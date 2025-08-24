@@ -6,9 +6,9 @@
   "scripts": { 
     "seed": "node seed.js",
     "start": "concurrently --kill-others-on-fail -n \"SCRAPER,MATCHER,TAILOR\" \"npm:start:scraper\" \"npm:start:matcher\" \"npm:start:tailor\"",
-    "dev:server": "nodemon index.js",
-    "dev:matcher": "nodemon services/matchAndTailor/linkedin/matcher-worker.js",
-    "dev:tailor": "nodemon services/matchAndTailor/linkedin/tailor-worker.js"
+    "dev:server": "nodemon --legacy-watch index.js",
+    "dev:matcher": "nodemon --legacy-watch services/matchAndTailor/linkedin/matcher-worker.js",
+    "dev:tailor": "nodemon --legacy-watch services/matchAndTailor/linkedin/tailor-worker.js"
   },
   "keywords": [],
   "author": "",
