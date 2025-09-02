@@ -1,9 +1,16 @@
 # .dockerignore
 
-# Ignore the local dependencies, we install them inside the container.
+# This is the most important line.
+# It prevents your local node_modules from being copied into the build.
 node_modules
 
-# Ignore logs and git files
-npm-debug.log
-.git
+# Also ignore these for smaller, more secure images
 .env
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+scraper.Dockerfile
+worker.Dockerfile
+npm-debug.log
+sessions/
