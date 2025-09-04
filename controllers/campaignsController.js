@@ -157,8 +157,7 @@ export async function stopCampaignController(req, res) {
 export async function getCompleteCampaignDetails(req, res) {
     try {
         const { campaignId } = req.params;
-        // const userId = req.user.id;
-        const userId = '68a71962d6c9a03ea8f278b0';
+        const userId = req.user.id;
 
         // 1. Authenticate the user and get the campaign (Unchanged).
         const campaign = await Campaign.findOne({ _id: campaignId, userId: userId }).lean();

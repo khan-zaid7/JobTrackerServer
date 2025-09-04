@@ -314,7 +314,7 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId, re
         pageNumber++;
         await goToNextPaginationPage(page);
         console.log(`📄 Starting to process page ${pageNumber}...`);
-        await processAllJobCardsWithScrolling(page, user, campaignId); // re-use your existing logic
+        await processAllJobCardsWithScrolling(page, user, campaignId, resumeId); // re-use your existing logic
     }
 
     console.log("🏁 All pagination pages processed. Exiting.");

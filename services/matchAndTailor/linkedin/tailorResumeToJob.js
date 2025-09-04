@@ -97,7 +97,8 @@ const createResumeHeader = async (resumeSummary, jobDescriptionSummary, jobToRes
       "Title": "*Your generated targeting headline here*",
       "Summary": {
         "paragraphs": [
-          "Your single, powerful summary sentence here. (Max upto 45 words only)"
+          "Your single, powerful summary sentence here. ***(Max upto 45 words only)***. Eg:
+          Focused on Node.js, Distributed Systems, and Generative AI"
         ]
       }
     }
@@ -318,3 +319,7 @@ export async function tailorResumeToJob({ userId, resumeId, jobId, matchedPairId
     });
   }
 }
+
+
+// create a new user using user model. 
+// create a new resume document using resume model 

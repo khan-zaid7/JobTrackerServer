@@ -1,6 +1,7 @@
 import ScrapedJob from '../../../models/ScrapedJob.js';
 import { callAIAPI, callDeepSeekReasonerAPI } from '../../../utils/aiClient.js';
-import { publishToExchange } from '../../queue.js';
+// Removing unused import
+// import { publishToExchange } from '../../queue.js';
 import MatchedPair from '../../../models/MatchedPair.js';
 import Resume from '../../../models/Resume.js';
 // User model is not directly used in the main function but might be needed by Mongoose .populate()
@@ -115,7 +116,7 @@ const inferJobPriorities = async (description) => {
   const systemPrompt = `
     You are an expert AI Hiring Analyst. Your specific task is to build a "Hiring Blueprint" from a job description.
 
-    This blueprint is the crucial first step in a two-part hiring process. It will be used by a separate AI to filter and evaluate candidates. Therefore, your analysis must be precise and clearly distinguish between absolute, non-negotiable requirements and other preferences. Your output is the rulebook that the next AI must follow.
+    This blueprint is the crucial first step in a two-part hiring process. It will be used by a separate AI to filter and evaluate candidates. Therefore, your analysis must be precise and clearly distinguish between absolute, non-negotiable requirements and other preferences. Your output is the guide that the next AI must follow.
   `.trim();
 
   // The user prompt specifies the new, more precise output format.
@@ -123,7 +124,7 @@ const inferJobPriorities = async (description) => {
     Analyze the provided structured job description. For each category, you will infer the hiring manager's true priority.
 
     You must classify each requirement's priority using one of these four levels:
-    - "Non-Negotiable": A hard requirement. A candidate's failure to meet this is a deal-breaker (e.g., minimum years of experience, specific location/work authorization).
+    - "Non-Negotiable": A hard requirement. A candidate's failure to meet this is a deal-breaker (e.g., minimum years of experience).
     - "Core Requirement": A central skill for the job. The candidate must be strong here, but exceptional, transferable skills could be considered (e.g., the main programming language).
     - "Strongly Preferred": A "nice-to-have" skill that separates good candidates from great ones. Lack of this is not a blocker.
     - "Low Priority / Standard": A standard expectation (e.g., "team player") or a factor that is not a primary screening criterion.
@@ -171,11 +172,6 @@ const inferJobPriorities = async (description) => {
         "requirement_summary": "Strong communication and collaboration skills.",
         "justification": "These are standard professional expectations best assessed in an interview, not for initial filtering."
       },
-      "location_and_availability": {
-        "level": "Non-Negotiable",
-        "requirement_summary": "Hybrid, based in London, UK.",
-        "justification": "Specific location and work model are typically firm legal and logistical requirements."
-      },
       "growth_potential": {
         "level": "Low Priority / Standard",
         "requirement_summary": "Not applicable for screening.",
@@ -208,67 +204,6 @@ const inferJobPriorities = async (description) => {
     console.error('❌ Failed to create the Hiring Blueprint.', error);
     throw new Error('The job description could not be analyzed for its priorities. Please check its content and try again.');
   }
-};
-
-const applyCandidateFlexibility = (originalBlueprint) => {
-  // Create a deep copy to avoid modifying the original object
-  const modifiedBlueprint = JSON.parse(JSON.stringify(originalBlueprint));
-
-  // Find the location rule
-  if (modifiedBlueprint.location_and_availability) {
-    console.log(`[Flexibility Override] Downgrading 'location_and_availability' from '${modifiedBlueprint.location_and_availability.level}' to 'Strongly Preferred'.`);
-
-    // Forcefully downgrade the priority level.
-    // This tells the AI: "This is a preference, not a deal-breaker. Use your judgment."
-    modifiedBlueprint.location_and_availability.level = "Strongly Preferred";
-  }
-
-  return modifiedBlueprint;
-};
-
-/**
- * Manually injects a location and work model flexibility statement into a structured resume object.
- * This is a pre-processing step to ensure the matching AI correctly interprets the candidate's preferences.
- *
- * @param {object} resumeData - The structured resume JSON, matching the expected blueprint.
- * @returns {object} The modified resume JSON with the flexibility statement added.
- */
-const addFlexibilityStatementToResume = (resumeData) => {
-  // Ensure we have valid data to work with. If not, return it unchanged.
-  if (!resumeData || !resumeData.candidate) {
-    console.warn("[Flexibility Injector] Invalid or empty resume data received. Returning as is.");
-    return resumeData;
-  }
-
-  // Define the clear, powerful statement you want to add.
-  const flexibilityStatement = "Fully flexible and open to relocation for remote, hybrid, or on-site roles globally.";
-
-  // --- Injection Point 1: The Contact Section (for structured data and keyword matching) ---
-
-  // Ensure the contact object exists before trying to add to it.
-  if (!resumeData.candidate.contact) {
-    resumeData.candidate.contact = {};
-  }
-
-  // Add a new, explicit field for availability. This is great for the AI's logical reasoning.
-  resumeData.candidate.contact.availability_statement = flexibilityStatement;
-  console.log("[Flexibility Injector] Added 'availability_statement' to contact info.");
-
-
-  // --- Injection Point 2: The Summary Section (for narrative context) ---
-
-  // Check if a summary already exists to append to it, otherwise create it.
-  if (resumeData.candidate.summary && resumeData.candidate.summary.trim() !== '') {
-    // Append to the existing summary for a natural feel.
-    resumeData.candidate.summary += ` ${flexibilityStatement}`;
-    console.log("[Flexibility Injector] Appended flexibility statement to existing summary.");
-  } else {
-    // If there's no summary, this statement is important enough to become the summary.
-    resumeData.candidate.summary = flexibilityStatement;
-    console.log("[Flexibility Injector] Set summary to the flexibility statement as it was empty.");
-  }
-
-  return resumeData;
 };
 
 /**
@@ -334,7 +269,6 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
       resumeSummary = newSummary;
     }
 
-    let modifiedResumeSummary = addFlexibilityStatementToResume(resumeSummary);
     let aiResponse;
     // Simple retry logic for the AI call
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -342,22 +276,20 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
         console.log(`--- Calling AI for Job ${jobId}, Attempt ${attempt} ---`);
         const inferredPriorities = await inferJobPriorities(scrapedJob.description);
 
-        // 2. Apply your candidate's flexibility override
-        const modifiedBlueprint = applyCandidateFlexibility(inferredPriorities);
-
         aiResponse = await callAIAPI(
           buildSystemPrompt(),
-          // Pass the structured resume summary and the job description object
-          buildUserPrompt({ description: scrapedJob.description, resume_summary: modifiedResumeSummary, hiring_priorities: modifiedBlueprint }),
+          // Use the NEW, streamlined user prompt function
+          buildUserPrompt(scrapedJob.description, resumeSummary, inferredPriorities),
           { model: 'gpt-4.1-mini' }
         );
-        // A new, more robust check for the new output format
-        if (aiResponse && aiResponse.recommendation && aiResponse.recommendation.hire_decision) {
-          console.log(`✅ AI analysis successful for Job ${jobId}. Hire Decision: ${aiResponse.recommendation.hire_decision}`);
+        
+        // Validation check for the streamlined schema structure
+        // Ensure we have all required fields based on the MatchedPair schema
+        if (aiResponse && aiResponse.match_analysis && aiResponse.action_plan && aiResponse.action_plan.application_strategy) {
+          console.log(`✅ AI analysis successful for Job ${jobId}. Strategy: ${aiResponse.action_plan.application_strategy}`);
           break; // Exit loop on success
         } else {
-          // This handles cases where the AI returns a malformed object
-          throw new Error('AI response was malformed or missing the hire_decision field.');
+          throw new Error('AI response was malformed or missing the required match_analysis or action_plan fields.');
         }
       } catch (error) {
         console.warn(`⚠️ AI call failed on attempt ${attempt} for job ${jobId}: ${error.message}`);
@@ -366,48 +298,43 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
         }
       }
     }
+    
     console.log(`[Matcher Service] Saving AI analysis report for Job ${jobId}.`);
-    // console.log('\n\n')
-    // console.log(JSON.stringify(scrapedJob.description));
-    // console.log(JSON.stringify(resumeSummary));
-    // console.log(JSON.stringify(finalJobBlueprint));
     console.log(JSON.stringify(aiResponse));
-    // console.log('\n\n')
 
-    const { recommendation, verdict } = aiResponse;
-    const hireDecision = recommendation.hire_decision.toUpperCase();
+    const { action_plan, verdict } = aiResponse;
+    const applicationStrategy = action_plan.application_strategy.toUpperCase();
 
-    // Map the AI's text-based decision to a numerical confidence score for sorting/filtering.
+    // This confidence map remains perfectly valid as the strategy options haven't changed.
     const confidenceMap = {
-      'STRONG HIRE': 0.95,
-      'HIRE': 0.90,
-      'INTERVIEW': 0.80,
-      'PROCEED TO INTERVIEW': 0.75,
-      'REJECT': 0.10
+      'STRONG FIT - APPLY NOW': 0.95,
+      'GOOD FIT - TAILOR & APPLY': 0.85,
+      'REACH - REQUIRES SIGNIFICANT TAILORING': 0.65,
+      'POOR FIT - RECONSIDER': 0.10
     };
 
     // Create the MatchedPair document with the full analysis.
     // This happens for ALL jobs, regardless of the hire decision.
-    const newPair = await MatchedPair.create({
+     const newPair = await MatchedPair.create({
       userId: userId,
       resumeId: resume._id,
       jobId: scrapedJob._id,
-      matchConfidence: confidenceMap[hireDecision] || 0.0, // Default to 0 if unknown decision
-      matchReason: verdict, // The AI's one-sentence summary is the perfect reason
-      analysisReport: aiResponse, // Store the entire detailed report
-      tailoringStatus: 'pending', // Status is pending until a decision to tailor is made
+      matchConfidence: confidenceMap[applicationStrategy] || 0.0,
+      matchReason: verdict,
+      analysisReport: aiResponse,
+      tailoringStatus: 'pending',
       campaignId: campaignId
     });
 
-    console.log(`[Matcher Service] Created MatchedPair document ${newPair._id} with hire_decision: '${hireDecision}'.`);
+    console.log(`[Matcher Service] Created MatchedPair document ${newPair._id} with strategy: '${applicationStrategy}'.`);
 
     // --- STEP 5: DECIDE WHETHER TO PROCEED TO TAILORING ---
 
     // Define which decisions trigger the next step in the pipeline.
-    const positiveDecisions = ['STRONG HIRE', 'HIRE', 'INTERVIEW', 'PROCEED TO INTERVIEW'];
+    const positiveStrategies = ['STRONG FIT - APPLY NOW', 'GOOD FIT - TAILOR & APPLY'];
 
     // ONLY if the decision is positive, we publish the job for tailoring.
-    if (positiveDecisions.includes(hireDecision)) {
+    if (positiveStrategies.includes(applicationStrategy)) {
       console.log(`[Matcher Service] AI decision is positive. Publishing for tailoring.`);
 
       const TAILOR_QUEUE_NAME = 'jobs.tailor';
@@ -422,14 +349,10 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
         { persistent: true }
       );
       console.log(`[Matcher-Worker] 🚀 Sent Job ${jobId} to the central tailor queue: "${TAILOR_QUEUE_NAME}".`);
-      // console.log(`[Matcher Service] 🚀 Published MatchedPair ${newPair._id} to exchange with address "${routingKey}"`);
 
     } else {
-      // For 'REJECT' decisions, we have already saved the report. Our work is done.
-      console.log(`[Matcher Service] AI decision is to reject. No further action will be taken for this job.`);
-      // Optional: You could update the tailoringStatus here to 'rejected' or 'archived'.
-      // newPair.tailoringStatus = 'rejected';
-      // await newPair.save();
+      // For 'REACH' and 'POOR FIT' decisions, we have already saved the report. Our work is done.
+      console.log(`[Matcher Service] AI strategy is to reconsider or requires significant reach. No further action will be taken for this job.`);
     }
 
     return true; // Indicate successful processing of the job.
@@ -442,112 +365,33 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
 };
 
 /**
- * 💡 NEW PROMPT: This prompt encourages narrative alignment over rigid checklists.
- * It asks the AI to think like an experienced recruiter, focusing on whether
- * the job is a logical and compelling "next step" in the candidate's career story.
+ * The final, recommended system prompt that balances a strong persona with clear, directive rules.
  */
 const buildSystemPrompt = () => {
   return `
-    You are a world-class elite hiring recruiter at a multi-national unicorn company, given a candidate's resume, a job description, and a crucial **Hiring Priorities Blueprint**.
+    Role: You are an expert AI Career Coach and Application Strategist. Your user is the candidate, and you will act as their pragmatic and insightful advisor.
 
-    Your role is to act as a pragmatic and data-driven talent evaluator. Your primary guide is the Hiring Blueprint, which defines the non-negotiable and core requirements for the role. Your professional judgment and intuition should be used to evaluate the candidate *within the boundaries set by the blueprint*.
+    Prime Directive: Be honest, realistic, and constructive. Giving a user false hope is a failure. Your goal is to guide them toward winnable opportunities.
 
-    - **Blueprint is Law:** You MUST treat any requirement marked as "Non-Negotiable" in the blueprint as a hard filter. No amount of "potential" can override a non-negotiable mismatch.
-    - **Evaluate Core Skills:** For "Core Requirements," use your expertise to assess the candidate's strength, including the value of their transferable skills. This is where you analyze their story and potential.
-    - **Narrative Judgment:** Frame your reasoning as if you're in a hiring meeting, but ground your arguments in the evidence from the resume and the rules from the blueprint.
-    - **Balance, Not Exceptions:** Be balanced and human, but do not create exceptions for non-negotiable items. Your job is to find the best talent that meets the foundational requirements. Your credibility with your hiring manager depends on it.
+    Rules of Analysis:
+    - The 'Hiring Priorities' document is the employer's rulebook. Your analysis must align the candidate's resume to these rules for two audiences:
+      1. Machine Screeners (ATS): Match key skills and keywords.
+      2. Human Readers: Showcase high-impact results and career narrative.
+    - Identify both strong alignments and critical gaps. Frame gaps as actionable prompts for the candidate (e.g., "Be sure to add any projects using Docker...").
+    - Assume foundational skills from advanced ones (e.g., React implies HTML/CSS/JS).
+    - Flag major, unbridgeable gaps as deal-breakers (e.g., a 3+ year experience shortfall for a senior role or a missing non-negotiable domain).
+    - Your entire output must be in the required JSON format only. Do not include any introductory text, explanations, or closing remarks outside of the JSON structure.
   `.trim();
 };
 
-
-
 /**
- * Builds the user prompt with the single job and structured resume summary.
+ * Builds a more direct and streamlined user prompt.
  */
 const buildUserPrompt = (description, resume_summary, hiring_priorities) => {
   return `
-    Once you are done with your analysis, you have to provide a detailed summary of various infromation, why or why not the candidate is suitable for the job to be later used by tailoring resume AI to tailor the resume in the JSON format below. 
+    Your mission: Following your Prime Directive and Rules of Analysis, produce a strategic analysis in the JSON format below. Focus on the most critical factors that determine a candidate's success. Your entire output must be in the required JSON format only.
 
-    Below is the exact output blueprint should look like:
-
-    \`\`\`json
-    {
-      "candidate_name": "",
-      "job_title": "",
-      "company": "",
-      "verdict": "A one-sentence summary of your final decision and the primary reason.",
-      "reasoning": {
-        "experience_gap": {
-          "issue": "What is the required experience vs. what the candidate has?",
-          "candidate_status": "Does the candidate meet, exceed, or fall short of the requirement?",
-          "impact": "How critical is this gap? Is it a hard-blocker or manageable?"
-        },
-        "domain_alignment": {
-          "issue": "Is the job in a specific domain (e.g., FinTech, HealthTech) and does the candidate have experience in it?",
-          "candidate_status": "Aligned, Partially Aligned, or Not Aligned.",
-          "impact": "Is domain experience a 'must-have' or a 'nice-to-have' for this role?"
-        },
-        "frontend_expectations": {
-          "issue": "What frontend skills are required by the job vs. what the candidate lists?",
-          "candidate_status": "Strong Match, Partial Match, or Mismatch.",
-          "impact": "How frontend-heavy is this role? Is this a major or minor part of the job?"
-        },
-        "backend_tech_match": {
-          "issue": "Compare the core backend technologies (languages, frameworks, databases) required vs. the candidate's skills.",
-          "candidate_status": "Direct Match, Transferable Skills, or Mismatch.",
-          "impact": "Is the required backend stack a non-negotiable or are the candidate's skills close enough to adapt?"
-        },
-        "devops_and_ci_cd": {
-          "issue": "Does the job require specific DevOps/Cloud/CI/CD skills (e.g., AWS, Docker, Terraform) and does the candidate have them?",
-          "candidate_status": "Experienced, Has Exposure, or Lacks Experience.",
-          "impact": "How critical are these skills for day-to-day work in this role?"
-        },
-        "seniority_and_autonomy": {
-          "issue": "Does the job imply a certain level of seniority (e.g., leading projects, mentoring) and does the candidate's resume demonstrate this?",
-          "candidate_status": "Matches Seniority, Shows Potential, or Junior Level.",
-          "impact": "Is there a mismatch in the expected level of independence and leadership?"
-        },
-        "soft_skills_culture_fit": {
-          "issue": "Based on the candidate's achievements and vibe, do they seem to possess the soft skills implied by the job (e.g., collaboration, problem-solving)?",
-          "candidate_status": "Appears to be a Good Fit, Neutral, or Potential Concerns.",
-          "impact": "Are there any red flags in how they describe their work that might clash with a team environment?"
-        },
-        "location_and_availability": {
-          "issue": "Does the job specify a location, time-zone, or work model (hybrid, remote) and is there any information to suggest a conflict?",
-          "candidate_status": "Assumed Match, Potential Conflict, or Mismatch.",
-          "impact": "Is this a logistical deal-breaker?"
-        },
-        "growth_potential": {
-          "issue": "Does this role seem like a logical next step for the candidate's career trajectory?",
-          "candidate_status": "Good Career Progression, Plausible Stretch, or Unclear Fit.",
-          "impact": "How likely is the candidate to be motivated and engaged in this role long-term?"
-        },
-        "compensation_expectations": {
-          "issue": "Does the job mention a salary range and is there anything in the candidate's profile to suggest a major mismatch (e.g., applying for a junior role with 15 years of experience)?",
-          "candidate_status": "Assumed to be in range, Potential Mismatch, or N/A.",
-          "impact": "Is there a risk of wasting everyone's time due to compensation issues?"
-        },
-        "cultural_vibe_match": {
-          "issue": "Compare the 'overall_vibe' of the candidate with the likely culture of the company (e.g., startup vs. enterprise, fast-paced vs. structured).",
-          "candidate_status": "Seems Aligned, Neutral, or Potential Mismatch.",
-          "impact": "How well does the candidate's professional personality seem to fit the implied work environment?"
-        }
-      },
-      "deal_breakers": [
-        "List any issues from the reasoning section that are absolute, non-negotiable deal-breakers."
-      ],
-      "possible_exceptions": [
-        "List any potential deal-breakers that might be overlooked if the candidate is exceptionally strong in other areas."
-      ],
-      "recommendation": {
-        "hire_decision": "Choose one: 'STRONG HIRE', 'HIRE', 'INTERVIEW', 'REJECT'",
-        "alternative_path": "If not a fit for this role, could they be a fit for another role? (e.g., 'Consider for a more junior backend role').",
-        "future_consideration": "Is this a candidate to keep on file for future openings? 'Yes' or 'No'."
-      }
-    }
-    \`\`\`
-
-    Below are the given blueprints of the job description and the resume:
+    Input data:
 
     Job Description Blueprint:
     ${JSON.stringify(description, null, 2)}
@@ -555,7 +399,44 @@ const buildUserPrompt = (description, resume_summary, hiring_priorities) => {
     Candidate Resume Blueprint:
     ${JSON.stringify(resume_summary, null, 2)}
 
-    Candidate Resume Blueprint:
+    Employer Hiring Priorities (The Rulebook):
     ${JSON.stringify(hiring_priorities, null, 2)}
+
+    \`\`\`json
+    {
+      "candidate_name": "",
+      "job_title": "",
+      "company": "",
+      "verdict": "A one-sentence summary of your final decision and the single most important reason.",
+      "match_analysis": {
+        "strengths": [
+          {
+            "category": "e.g., Backend Tech Stack, Seniority, Domain Alignment",
+            "summary": "Describe a key area of strong alignment and why it matters for this role."
+          }
+        ],
+        "gaps": [
+          {
+            "category": "e.g., Experience Gap, Missing Core Skill, DevOps Experience",
+            "summary": "Describe a critical gap or misalignment and its potential impact.",
+            "is_deal_breaker": "true or false"
+          }
+        ]
+      },
+      "action_plan": {
+        "application_strategy": "Choose one: 'STRONG FIT - APPLY NOW', 'GOOD FIT - TAILOR & APPLY', 'REACH - REQUIRES SIGNIFICANT TAILORING', 'POOR FIT - RECONSIDER'",
+        "tailoring_for_ats": {
+          "required_keywords": ["List critical keywords from the job description missing from the resume."],
+          "phrasing_suggestions": ["Suggest specific phrasing changes to better align with the job description's language."]
+        },
+        "tailoring_for_human_reviewer": {
+          "strengthen_narrative": "Advise on how to frame their experience as a compelling story for this specific role.",
+          "highlight_impact": ["Identify 1-2 achievements from the resume that should be made more prominent or rephrased to show quantifiable impact (e.g., 'Instead of 'Managed project', write 'Led a 5-person team to deliver Project X, increasing user engagement by 15%'.')."]
+        },
+        "alternative_path": "If the fit is poor, suggest other role types that are a better match for the candidate's core strengths.",
+        "future_consideration": "Should this role/company be targeted again in the future? 'Yes' or 'No'."
+      }
+    }
+    \`\`\`
   `.trim();
 };
