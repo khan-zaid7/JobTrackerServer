@@ -14,6 +14,7 @@ import scrapeRoutes from './routes/scrape.js';
 import pipelineRoutes from './routes/pipelineSession.js';
 import campaignsRoutes from './routes/campaigns.js';
 import matchResultsRoutes from './routes/matchResults.js';
+import manualJobRoutes from './routes/manualJobs.js';
 
 // --- Service Imports ---
 import { connectToQueue } from './services/queue.js';
@@ -50,6 +51,7 @@ app.use('/api/match-results', matchResultsRoutes);
 app.use('/api/scrape', scrapeRoutes);
 app.use('/api/pipeline-session/', pipelineRoutes);
 app.use('/api/campaigns', campaignsRoutes);
+app.use('/api/manual-jobs', manualJobRoutes);
 
 // --- Static File Serving ---
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

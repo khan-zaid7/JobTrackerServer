@@ -224,6 +224,14 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
     }
     console.log(`[Matcher Service] Starting match for Job ID: ${jobId} in Campaign: ${campaignId}`);
 
+    // Log manual job information
+    const isManualJobFlag = jobToProcess.isManualJob || false;
+    const forceTailoringFlag = jobToProcess.forceTailoring || false;
+
+    if (isManualJobFlag) {
+      console.log(`[Manual Job] Processing manual job. Force tailoring: ${forceTailoringFlag}`);
+    }
+
     // --- STEP 2: FETCH AND VALIDATE DATA ---
     const scrapedJob = await ScrapedJob.findById(jobId).populate('createdBy');
 
@@ -282,7 +290,7 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
           buildUserPrompt(scrapedJob.description, resumeSummary, inferredPriorities),
           { model: 'gpt-4.1-mini' }
         );
-        
+
         // Validation check for the streamlined schema structure
         // Ensure we have all required fields based on the MatchedPair schema
         if (aiResponse && aiResponse.match_analysis && aiResponse.action_plan && aiResponse.action_plan.application_strategy) {
@@ -298,7 +306,7 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
         }
       }
     }
-    
+
     console.log(`[Matcher Service] Saving AI analysis report for Job ${jobId}.`);
     console.log(JSON.stringify(aiResponse));
 
@@ -315,7 +323,7 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
 
     // Create the MatchedPair document with the full analysis.
     // This happens for ALL jobs, regardless of the hire decision.
-     const newPair = await MatchedPair.create({
+    const newPair = await MatchedPair.create({
       userId: userId,
       resumeId: resume._id,
       jobId: scrapedJob._id,
@@ -330,16 +338,48 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
 
     // --- STEP 5: DECIDE WHETHER TO PROCEED TO TAILORING ---
 
+    // Check if this is a manual job with forced tailoring
+    const isManualJob = jobToProcess.isManualJob || false;
+    const forceTailoring = jobToProcess.forceTailoring || false;
+
     // Define which decisions trigger the next step in the pipeline.
     const positiveStrategies = ['STRONG FIT - APPLY NOW', 'GOOD FIT - TAILOR & APPLY'];
 
-    // ONLY if the decision is positive, we publish the job for tailoring.
-    if (positiveStrategies.includes(applicationStrategy)) {
-      console.log(`[Matcher Service] AI decision is positive. Publishing for tailoring.`);
+    // Determine if we should proceed to tailoring
+    let shouldTailor = false;
+    let tailorReason = '';
+
+    if (isManualJob && forceTailoring) {
+      // Manual job with forced tailoring - override AI decision
+      shouldTailor = true;
+      tailorReason = 'Manual job with user-requested tailoring (AI decision overridden)';
+      console.log(`[Manual Job] Forcing tailoring for job ${jobId} as requested by user`);
+    } else if (positiveStrategies.includes(applicationStrategy)) {
+      // Normal AI-driven decision
+      shouldTailor = true;
+      tailorReason = `AI decision: ${applicationStrategy}`;
+      console.log(`[Matcher Service] AI decision is positive: ${applicationStrategy}`);
+    } else {
+      // AI recommends not to tailor
+      tailorReason = `AI decision: ${applicationStrategy} - no tailoring needed`;
+      console.log(`[Matcher Service] AI decision is negative: ${applicationStrategy}`);
+    }
+
+    // ONLY if we should tailor, publish the job for tailoring
+    if (shouldTailor) {
+      console.log(`[Matcher Service] Publishing for tailoring. Reason: ${tailorReason}`);
 
       const TAILOR_QUEUE_NAME = 'jobs.tailor';
-      // The message contains the mission for the next worker.
-      const tailorMessage = { jobId: jobId, matchedPairId: newPair._id, campaignId: campaignId, resumeId: resumeId };
+      // The message contains the mission for the next worker, including manual job flags
+      const tailorMessage = {
+        jobId: jobId,
+        matchedPairId: newPair._id,
+        campaignId: campaignId,
+        resumeId: resumeId,
+        isManualJob: isManualJob,
+        forceTailoring: forceTailoring,
+        tailorReason: tailorReason
+      };
       // Ensure the queue exists before sending to it.
       await channel.assertQueue(TAILOR_QUEUE_NAME, { durable: true });
       // Send the new job to the central tailor queue.
@@ -351,8 +391,12 @@ export const matchJobsToResume = async (jobToProcess, channel) => {
       console.log(`[Matcher-Worker] 🚀 Sent Job ${jobId} to the central tailor queue: "${TAILOR_QUEUE_NAME}".`);
 
     } else {
-      // For 'REACH' and 'POOR FIT' decisions, we have already saved the report. Our work is done.
-      console.log(`[Matcher Service] AI strategy is to reconsider or requires significant reach. No further action will be taken for this job.`);
+      // Tailoring was not triggered - either by AI decision or user choice
+      if (isManualJob && !forceTailoring) {
+        console.log(`[Manual Job] User chose not to force tailoring for job ${jobId}. AI decision: ${applicationStrategy}`);
+      } else {
+        console.log(`[Matcher Service] ${tailorReason}. No further action will be taken for this job.`);
+      }
     }
 
     return true; // Indicate successful processing of the job.
@@ -381,6 +425,8 @@ const buildSystemPrompt = () => {
     - Assume foundational skills from advanced ones (e.g., React implies HTML/CSS/JS).
     - Flag major, unbridgeable gaps as deal-breakers (e.g., a 3+ year experience shortfall for a senior role or a missing non-negotiable domain).
     - Your entire output must be in the required JSON format only. Do not include any introductory text, explanations, or closing remarks outside of the JSON structure.
+     3.Suggestions MUST reframe or re-word experience ALREADY PRESENT in the candidate's resume. DO NOT suggest adding new responsibilities, duties, or skills the candidate has not mentioned.
+    - "Suggest specific phrasing changes to better align with the job description's language."
   `.trim();
 };
 
@@ -427,7 +473,10 @@ const buildUserPrompt = (description, resume_summary, hiring_priorities) => {
         "application_strategy": "Choose one: 'STRONG FIT - APPLY NOW', 'GOOD FIT - TAILOR & APPLY', 'REACH - REQUIRES SIGNIFICANT TAILORING', 'POOR FIT - RECONSIDER'",
         "tailoring_for_ats": {
           "required_keywords": ["List critical keywords from the job description missing from the resume."],
-          "phrasing_suggestions": ["Suggest specific phrasing changes to better align with the job description's language."]
+          "phrasing_suggestions": [
+            // CRITICAL SAFETY RULE: Suggestions MUST reframe or re-word experience ALREADY PRESENT in the candidate's resume. DO NOT suggest adding new responsibilities, duties, or skills the candidate has not mentioned.
+            "Suggest specific phrasing changes to better align with the job description's language."
+          ]
         },
         "tailoring_for_human_reviewer": {
           "strengthen_narrative": "Advise on how to frame their experience as a compelling story for this specific role.",

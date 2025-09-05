@@ -1,7 +1,6 @@
 import { getChannel } from '../../queue.js';
 import { selectors } from '../../../config/pageLocators.js';
 import extractJobDetails from './jobDetailExtractor.js';
-import { ParseJobDetailsSummary } from './jobDetailsSummaryParser.js';
 import { hasNextPaginationPage, goToNextPaginationPage } from './paginationHandler.js';
 import ScrapedJob from '../../../models/ScrapedJob.js';
 import Campaign from '../../../models/Campaign.js';
@@ -167,12 +166,17 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId, re
 
         for (const [index, cardElement] of currentJobCardElements.entries()) {
             let campaign = await Campaign.findById(campaignId).select('status').lean();
-            if (campaign.status === 'stopped') {
+            if (campaign?.status === 'stopped') {
                 console.log(`[Scraper Orchestrator] Campaign ${campaignId} stopped before work began. Exiting.`);
                 return;
             }
 
+            // Add debug logging for campaign status
+            console.log(`🔍 Campaign ${campaignId} status: ${campaign?.status || 'NOT_FOUND'}`);
+
             const jobId = await cardElement.getAttribute('data-occludable-job-id');
+            if (!jobId || processedJobIds.has(jobId)) continue;
+
             if (!jobId || processedJobIds.has(jobId)) continue;
 
             // check if this job card is already processed. 
@@ -220,7 +224,8 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId, re
                     const savedJob = await ScrapedJob.saveJobIfNotExists({
                         ...structuredJobData, // Use the complete, structured data from the AI
                         createdBy: user._id,
-                        campaignId: campaignId
+                        campaignId: campaignId,
+                        resumeId: resumeId    
                     });
 
                     console.warn(`saved JOb: ${savedJob}`)
@@ -267,6 +272,7 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId, re
         if (cardsProcessedInThisLoopIteration > 0) {
             noNewUnprocessedCardsAfterScrollAttempts = 0;
             console.log(`🥳 Processed ${cardsProcessedInThisLoopIteration} new job(s).`);
+            
             await page.waitForTimeout(1500 + Math.random() * 1500);
         } else {
             console.log("🤷 No new (unprocessed) jobs found. Aggressively scrolling...");

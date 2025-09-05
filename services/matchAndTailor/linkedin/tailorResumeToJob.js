@@ -19,6 +19,7 @@ const createMasterTailorPlan = async (resumeSummary, jobDescriptionSummary, jobT
     \`\`\`json
     {
       "match_tier": "A strategic classification: e.g., 'Strong Contender', 'Plausible Stretch', 'Hard Reject'",
+      "candidate_seniority_tier": "Junior | Mid-Level | Senior",
       "confidence_score": "A numerical score from 0-100 representing the AI's confidence.",
       "analysis_summary": "A concise, one-sentence summary explaining the core strategic situation (e.g., 'High-potential candidate with strong foundational skills but critical gaps in specific, required tooling.')",
       "core_narrative_to_project": "The single, most important story or theme the tailored resume must tell. (e.g., 'Reframe the candidate from a Generalist to a Specialist in Data-Centric Automation.')",
@@ -71,6 +72,12 @@ const createResumeHeader = async (resumeSummary, jobDescriptionSummary, jobToRes
   // This AI persona is a specialist copywriter focused ONLY on the resume's opening.
   const systemPrompt = `
     You are a master Resume Wordsmith and Headhunter's Copywriter, specializing in creating high-impact opening statements that immediately capture a recruiter's attention and align with a core strategic narrative. Your sole task is to generate the professional 'Header', a targeting 'Title', and a powerful **but brief**  'Summary' based on the provided master plan, resume summary, job description summary, JobToResume analysis report.
+    
+    You will be provided with a 'candidate_seniority_tier' in the master plan. You MUST use this tier to calibrate the strength of your language.
+
+    - If tier is 'Senior', you may use authoritative terms like 'expert' and 'specialist'.
+    - If tier is 'Mid-Level', focus on terms like 'skilled', 'proficient', and 'experienced'.
+    - If tier is 'Junior', use terms like 'focused on', 'with a foundation in', and 'developing skills in'.
 
     The generated resume's professional headline ('Title') should clearly connect to the position you're applying for. This doesn't mean misrepresenting experience, but rather framing it in relevant terms. If the candidate's titles don't obviously connect to the role, you must create a professional headline that bridges this gap.The title should contain only title.
 
@@ -150,6 +157,12 @@ const createResumeBody = async (resumeSummary, jobDescriptionSummary, jobToResum
     Your approach is not about gaming the system—it's about **advertising**. Present the candidate's authentic professional self in a way that highlights the most relevant aspects of their experience for this specific opportunity.
 
     // --- CRITICAL PITFALLS TO AVOID --- //
+    - **You will be provided with a 'candidate_seniority_tier' in the master plan. You MUST use this tier to calibrate the strength of your language.
+
+    - If tier is 'Senior', you may use authoritative terms like 'expert' and 'specialist'.
+    - If tier is 'Mid-Level', focus on terms like 'skilled', 'proficient', and 'experienced'.
+    - If tier is 'Junior', use terms like 'focused on', 'with a foundation in', and 'developing skills in'.
+
     - **No Keyword Stuffing:** Every keyword must be contextually relevant to the candidate's actual experience.
     - **No Stretching the Truth:** Do not misrepresent qualifications. Your goal is to reframe and refocus real, relevant experiences honestly.
     - **No Generic Language:** Avoid template phrases. Every bullet point should be tailored and impactful.
