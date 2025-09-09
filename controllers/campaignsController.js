@@ -55,9 +55,11 @@ export async function launchCampaignController(req, res) {
 }
 export async function getAllCampaigns(req, res) {
     try {
-        // ✨ THE FIX: Get the user ID from the authenticated token, not params.
         const userId = req.user.id;
-        const campaigns = await Campaign.find({ userId: userId }).sort({ createdAt: -1 });
+         const campaigns = await Campaign.find({ 
+            userId: userId,
+            targetRole: { $ne: 'Direct Applications' } // Exclude the default campaign
+        }).sort({ createdAt: -1 });
         return res.status(200).json({ campaigns });
     } catch (err) {
         console.error('Failed to fetch campaigns:', err);
