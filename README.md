@@ -16,6 +16,12 @@
 
 ---
 
+## 📺 Demo
+
+[▶ Watch Demo on Google Drive](https://drive.google.com/file/d/1TV5sOvnTj5sIOWDR60bxwfjPkiaj28rj/view?usp=sharing)
+
+---
+
 ## Overview
 
 This pipeline automates the entire job application process using a decoupled microservices architecture and a multi-model AI workflow. Each service handles a distinct stage of the pipeline — from scraping job postings to generating a perfectly tailored resume and uploading it to the cloud.
