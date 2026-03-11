@@ -1,10 +1,10 @@
-import { publishToExchange } from '../../queue.js';
+import { getChannel } from '../../queue.js';
 import { selectors } from '../../../config/pageLocators.js';
 import extractJobDetails from './jobDetailExtractor.js';
-import { ParseJobDetailsSummary } from './jobDetailsSummaryParser.js';
 import { hasNextPaginationPage, goToNextPaginationPage } from './paginationHandler.js';
 import ScrapedJob from '../../../models/ScrapedJob.js';
-import { getHourlyToken } from '../../../utils/humanUtils.js';
+import Campaign from '../../../models/Campaign.js';
+
 /**
  * Slowly scroll the job detail card with randomized steps, simulating human reading.
  * @param {import('@playwright/test').Page} page
@@ -146,7 +146,7 @@ async function aggressiveJobListScroll(page) {
  * Processes all visible job cards and scrolls to load more as needed.
  * @param {import('@playwright/test').Page} page
  */
-export async function processAllJobCardsWithScrolling(page, user, campaignId) {
+export async function processAllJobCardsWithScrolling(page, user, campaignId, resumeId) {
     if (!campaignId) {
         throw new Error("FATAL: campaignId is missing. Scraper cannot publish to the correct address.");
     }
@@ -157,13 +157,26 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
     const MAX_NO_NEW_UNPROCESSED_CARDS_ATTEMPTS = 5;
 
     while (true) {
+
+
         const currentJobCardElements = await page.locator(selectors.jobCardLi).elementHandles();
         console.log(`Found ${currentJobCardElements.length} job cards in view.`);
 
         let cardsProcessedInThisLoopIteration = 0;
 
         for (const [index, cardElement] of currentJobCardElements.entries()) {
+            let campaign = await Campaign.findById(campaignId).select('status').lean();
+            if (campaign?.status === 'stopped') {
+                console.log(`[Scraper Orchestrator] Campaign ${campaignId} stopped before work began. Exiting.`);
+                return;
+            }
+
+            // Add debug logging for campaign status
+            console.log(`🔍 Campaign ${campaignId} status: ${campaign?.status || 'NOT_FOUND'}`);
+
             const jobId = await cardElement.getAttribute('data-occludable-job-id');
+            if (!jobId || processedJobIds.has(jobId)) continue;
+
             if (!jobId || processedJobIds.has(jobId)) continue;
 
             // check if this job card is already processed. 
@@ -196,30 +209,55 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
 
             console.log(`📄 Clicked job card #${index + 1} (id=${jobId}) at (${Math.round(centerX)}, ${Math.round(centerY)})`);
 
+            // Corrected block for your `for` loop
             try {
                 await page.waitForSelector(selectors.jobDetailCard, { timeout: 7000 });
                 await page.waitForTimeout(1500 + Math.random() * 1500);
                 await scrollJobDetailCard(page);
-                const jobData = await extractJobDetails(page);
 
-                if (jobData) {
-                    // Parse job data in a summary file 
-                    await ParseJobDetailsSummary(jobData, cardsProcessedInThisLoopIteration);
+                // 1. Extract and Parse the data in one step
+                // extractJobDetails ALREADY contains your AI call (ParseJobDetailsSummary)
+                const structuredJobData = await extractJobDetails(page);
 
-                    // No change to saving the job
-                    const savedJob = await ScrapedJob.saveJobIfNotExists({ ...jobData, createdBy: user._id, campaignId: campaignId });
+                if (structuredJobData) {
+                    // 2. Save the STRUCTURED data to the database
+                    const savedJob = await ScrapedJob.saveJobIfNotExists({
+                        ...structuredJobData, // Use the complete, structured data from the AI
+                        createdBy: user._id,
+                        campaignId: campaignId,
+                        resumeId: resumeId    
+                    });
+
+                    console.warn(`saved JOb: ${savedJob}`)
+                    console.warn(`saved JOb: ${ savedJob._id.toString()}`)
 
                     if (savedJob) {
                         const newJobId = savedJob._id.toString();
-                        const routingKey = `match.${campaignId}`; // e.g., "match.campaign_123"
-                        const message = { jobId: newJobId, campaignId: campaignId };
+                        const MATCH_QUEUE_NAME = 'jobs.match';
 
-                        await publishToExchange(routingKey, message);
-                        console.log(`🚀 Published { jobId: ${newJobId} } with address "${routingKey}"`);
+                        // 3. THE FIX: Construct the COMPLETE message payload
+                        // Combine the IDs AND the structured job data
+                        const message = {
+                            ...structuredJobData, // Spread the AI-parsed job details
+                            jobId: newJobId,      // Add the MongoDB job ID
+                            campaignId: campaignId,
+                            resumeId: resumeId
+                        };
+
+                        const channel = getChannel();
+                        await channel.assertQueue(MATCH_QUEUE_NAME, { durable: true });
+
+                        // 4. Send the complete and correct message
+                        channel.sendToQueue(
+                            MATCH_QUEUE_NAME,
+                            Buffer.from(JSON.stringify(message)),
+                            { persistent: true }
+                        );
+                        console.log(`🚀 Sent COMPLETE job data for ${newJobId} to the central matching queue.`);
                     }
                 }
             } catch (error) {
-                console.log(`❌ Failed to load or scroll job detail for ID ${jobId}:`, error);
+                console.log(`❌ Failed to load or process job detail for ID ${jobId}:`, error);
             }
 
             if (index + 1 < currentJobCardElements.length) {
@@ -234,6 +272,7 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
         if (cardsProcessedInThisLoopIteration > 0) {
             noNewUnprocessedCardsAfterScrollAttempts = 0;
             console.log(`🥳 Processed ${cardsProcessedInThisLoopIteration} new job(s).`);
+            
             await page.waitForTimeout(1500 + Math.random() * 1500);
         } else {
             console.log("🤷 No new (unprocessed) jobs found. Aggressively scrolling...");
@@ -281,7 +320,7 @@ export async function processAllJobCardsWithScrolling(page, user, campaignId) {
         pageNumber++;
         await goToNextPaginationPage(page);
         console.log(`📄 Starting to process page ${pageNumber}...`);
-        await processAllJobCardsWithScrolling(page, user, campaignId); // re-use your existing logic
+        await processAllJobCardsWithScrolling(page, user, campaignId, resumeId); // re-use your existing logic
     }
 
     console.log("🏁 All pagination pages processed. Exiting.");

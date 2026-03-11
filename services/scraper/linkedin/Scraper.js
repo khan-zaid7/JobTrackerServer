@@ -2,8 +2,10 @@ import { createOrLoadSessionContext } from './createOrLoadSessionContext.js';
 import { clickJobsNav } from './navigateToJobs.js';
 import { performJobSearchByTitle, changeSearchLocation } from './performJobSearch.js';
 import { applyFilter } from './applyJobFilters.js';
-import { retrieveTotalJobCount } from './retrieveJobCount.js'; 
+import { retrieveTotalJobCount } from './retrieveJobCount.js';
 import { processAllJobCardsWithScrolling } from './jobCardProcessor.js';
+import Campaign from '../../../models/Campaign.js';
+
 /**
  * Main function to orchestrate the LinkedIn job scraping process.
  * This function handles browser setup, navigation, search, filtering,
@@ -12,9 +14,15 @@ import { processAllJobCardsWithScrolling } from './jobCardProcessor.js';
 
 // ----------------------------------------------------------------
 
-export async function runJobScraper(query = { search_term, location }, user, campaignId) {
+export async function runJobScraper(query = { search_term, location }, user, campaignId, resumeId) {
 
     if (!query) throw new Error('Search Parameters are required!');
+
+    let campaign = await Campaign.findById(campaignId).select('status').lean();
+    if (campaign.status === 'stopped') {
+        console.log(`[Scraper Orchestrator] Campaign ${campaignId} stopped before work began. Exiting.`);
+        return;
+    }
     
     let browser, context, page;
     try {
@@ -60,7 +68,7 @@ export async function runJobScraper(query = { search_term, location }, user, cam
         console.log("\n--- Starting Phase 2: Scrolling Job List ---");
         try {
             // Call the modularized scrolling function
-            await processAllJobCardsWithScrolling(page, user, campaignId);
+            await processAllJobCardsWithScrolling(page, user, campaignId, resumeId);
             console.log("Finished scrolling the current job list.");
         } catch (error) {
             console.error(`Error during Phase 2 (Scrolling Job List): ${error.message}`);

@@ -19,6 +19,7 @@ const recommendationSchema = new mongoose.Schema({
     future_consideration: { type: String, default: "" }
 }, { _id: false });
 
+
 const matchedPairSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     resumeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Resume', required: true },

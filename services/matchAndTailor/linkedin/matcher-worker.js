@@ -1,85 +1,112 @@
+// services/matchAndTailor/linkedin/matcher-worker.js (Final, Refactored Version)
+
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import {
-    connectToQueue,
-    getChannel,
-    closeQueueConnection,
-    consumeFromCampaignQueue
-} from '../../queue.js';
+import amqplib from 'amqplib';
 import { matchJobsToResume } from './matchJobsToResume.js';
+import { publishToExchange } from '../../queue.js'; // We still need this to talk to the tailor
+import Campaign from '../../../models/Campaign.js';
 
 dotenv.config();
 
-// The CAMPAIGN_ID is passed in by the 'run_campaign.js' script.
-const CAMPAIGN_ID = process.env.CAMPAIGN_ID;
-
+// Standard database connection function
 const connectDB = async () => {
     if (mongoose.connection.readyState >= 1) return;
     try {
-        await mongoose.connect(process.env.MONGO_URI);
-        console.log(`[Matcher-${CAMPAIGN_ID}] ✅ MongoDB connected.`);
+        await mongoose.connect(process.env.MONGO_URL);
+        console.log(`[Matcher-Worker] ✅ MongoDB connected.`);
     } catch (err) {
-        console.error(`[Matcher-${CAMPAIGN_ID}] ❌ MongoDB connection failed:`, err.message);
+        console.error(`[Matcher-Worker] ❌ DB connection failed:`, err.message);
         process.exit(1);
     }
 };
 
-const startMatcherWorker = async () => {
-    if (!CAMPAIGN_ID) {
-        throw new Error("FATAL: CAMPAIGN_ID environment variable is not set. This worker has no mission.");
-    }
-    
-    await connectDB();
-    await connectToQueue();
-
-    const channel = getChannel();
-    if (!channel) {
-        console.error(`[Matcher-${CAMPAIGN_ID}] ❌ Failed to get RabbitMQ channel. Exiting.`);
-        process.exit(1);
+/**
+ * Processes a single job message from the central matching queue.
+ * @param {import('amqplib').ConsumeMessage | null} msg The message from RabbitMQ.
+ * @param {import('amqplib').Channel} channel The RabbitMQ channel.
+ */
+async function processMatchJob(msg, channel) {
+    if (msg === null) {
+        return; // This can happen if the channel is closed
     }
 
-    // ✅ Set prefetch to 1 to process one message at a time.
-    channel.prefetch(1);
+    let jobDetails;
+    try {
+        // 1. Receive and Parse the Job
+        jobDetails = JSON.parse(msg.content.toString());
+        const { jobId, campaignId, resumeId } = jobDetails;
 
-    console.log(`[Matcher-${CAMPAIGN_ID}] 🔁 Ready. Waiting for jobs...`);
-
-    // ✅ Consume one message at a time. The batching logic is removed.
-    await consumeFromCampaignQueue('match', CAMPAIGN_ID, async (msg) => {
-        if (msg === null) return;
-
-        // ✅ Process each message individually as it arrives.
-        const jobToProcess = JSON.parse(msg.content.toString());
-        console.log(`[Matcher-${CAMPAIGN_ID}] ⚙️ Processing job ID: ${jobToProcess.jobId}`);
-
-        try {
-            // Note: We pass the job inside an array to maintain compatibility
-            // with `matchJobsToResume` if it expects an array.
-            const isSuccess = await matchJobsToResume(jobToProcess);
-
-            if (isSuccess) {
-                console.log(`[Matcher-${CAMPAIGN_ID}] ✅ Job matched successfully. Acknowledging message.`);
-                channel.ack(msg);
-            } else {
-                console.warn(`[Matcher-${CAMPAIGN_ID}] ⚠️ Match failed for job. Requeueing message.`);
-                channel.nack(msg, false, true); // Requeue on logical failure
-            }
-        } catch (error) {
-            console.error(`[Matcher-${CAMPAIGN_ID}] ❌ Critical error during match. Rejecting job.`, error);
-            channel.nack(msg, false, false); // Do not requeue on critical error
-        } finally {
-            console.log(`[Matcher-${CAMPAIGN_ID}] ⏳ Done processing job.`);
+        if (!jobId || !campaignId || !resumeId) {
+            throw new Error("Invalid job message received. Missing 'jobId' or 'campaignId' or 'resumeId'.");
         }
-    });
+
+        // Check the campaign's status BEFORE doing any matching work.
+        const campaign = await Campaign.findById(campaignId).select('status').lean();
+
+        if (!campaign || campaign.status === 'stopped') {
+            console.log(`--- [Matcher-Worker] 🛑 Campaign ${campaignId} is stopped. Discarding job ${jobId}. ---`);
+            // Acknowledge the message to remove it from the queue. This is a successful cancellation.
+            channel.ack(msg);
+            return; // Stop processing this message
+        }
+        // ======================================================================
+
+        console.log(`--- [Matcher-Worker] ⚙️  Processing Job: ${jobId} for Campaign: ${campaignId} ---`);
+
+        // 2. Execute the Core Business Logic
+        const isSuccess = await matchJobsToResume(jobDetails, channel);
+
+        // 3. Handle the Result
+        if (isSuccess) {
+            console.log(`[Matcher-Worker] ✅ Match successful for Job ${jobId}.`);
+            // The message is acknowledged *inside* matchJobsToResume or after it succeeds.
+            // Your original code acknowledged here, which is also fine.
+            channel.ack(msg);
+
+        } else {
+            console.warn(`[Matcher-Worker] ⚠️ Logical match failed for job ${jobId}. Rejecting message.`);
+            // Acknowledge the failure, but don't requeue. A re-run won't fix a bad match.
+            channel.nack(msg, false, false);
+        }
+
+    } catch (error) {
+        console.error(`[Matcher-Worker] ❌ Critical error processing job ${jobDetails?.jobId}. Rejecting job.`, error);
+        // Acknowledge the failure, don't requeue a job that causes a crash.
+        channel.nack(msg, false, false);
+    }
+}
+
+/**
+ * Main startup function for the long-lived, generic matcher worker service.
+ */
+const startWorker = async () => {
+    console.log('[Matcher-Worker] Starting...');
+    await connectDB();
+
+    try {
+        const connection = await amqplib.connect(process.env.RABBITMQ_URL);
+        const channel = await connection.createChannel();
+
+        // This worker listens to the ONE SHARED QUEUE for all new matching jobs.
+        // This name MUST match the queue name used by the scraper.
+        const MATCH_QUEUE_NAME = 'jobs.match';
+        await channel.assertQueue(MATCH_QUEUE_NAME, { durable: true });
+
+        // Only fetch one message at a time. This worker won't receive a new job
+        // until it has acknowledged the previous one. This ensures fair load balancing.
+        channel.prefetch(1);
+
+        console.log(`[Matcher-Worker] 👂 Waiting for jobs in the central queue: "${MATCH_QUEUE_NAME}".`);
+
+        // Start consuming from the shared queue. This runs forever until the container is stopped.
+        channel.consume(MATCH_QUEUE_NAME, (msg) => processMatchJob(msg, channel), { noAck: false });
+
+    } catch (err) {
+        console.error('[Matcher-Worker] 🔥 Fatal startup error:', err);
+        process.exit(1);
+    }
 };
 
-startMatcherWorker().catch(async (err) => {
-    console.error(`[Matcher-${CAMPAIGN_ID || 'NO_CAMPAIGN'}] 🔥 Unhandled error:`, err);
-    await closeQueueConnection();
-    process.exit(1);
-});
-
-process.on('SIGINT', async () => {
-    console.log(`[Matcher-${CAMPAIGN_ID || 'NO_CAMPAIGN'}] 🛑 SIGINT received. Cleaning up...`);
-    await closeQueueConnection();
-    process.exit(0);
-});
+// Start the worker service.
+startWorker();

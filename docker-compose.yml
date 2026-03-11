@@ -1,0 +1,125 @@
+# docker-compose.yml (Complete, with Explicit Replicas)
+
+services:
+  # Our Node.js/Express application service
+  api-server:
+    build: .
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017/job-tracker
+      - RABBITMQ_URL=amqp://rabbitmq
+    depends_on:
+      mongodb:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    command: npm run dev:server
+
+  # Our MongoDB database service
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    command: ["mongod", "--quiet"]
+
+  # RabbitMQ service with the healthcheck
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/data/db
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running", "-q"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # The virtual screen for viewing the headful browser
+  novnc:
+    image: theasp/novnc:latest
+    ports:
+      - "8080:8080"
+
+  # The scraper worker service
+  scraper-worker:
+    build:
+      context: .
+      dockerfile: scraper.Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+      novnc:
+        condition: service_started
+    env_file:
+      - .env
+    shm_size: '2gb'
+    environment:
+      - DISPLAY=novnc:0.0
+      - MONGO_URL=mongodb://mongodb:27017/job-tracker
+      - RABBITMQ_URL=amqp://rabbitmq
+    volumes:
+      - ./sessions:/usr/src/app/sessions
+    # --- ADD THIS TO EXPLICITLY SET THE NUMBER OF WORKERS ---
+    deploy:
+      replicas: 1
+
+  # NEW SERVICE FOR THE MATCHER
+  matcher-worker:
+    build:
+      context: .
+      dockerfile: worker.Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017/job-tracker
+      - RABBITMQ_URL=amqp://rabbitmq
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    command: npm run dev:matcher
+    # --- ADD THIS TO EXPLICITLY SET THE NUMBER OF WORKERS ---
+    deploy:
+      replicas: 1
+
+  # NEW SERVICE FOR THE TAILOR
+  tailor-worker:
+    build:
+      context: .
+      dockerfile: worker.Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017/job-tracker
+      - RABBITMQ_URL=amqp://rabbitmq
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    command: npm run dev:tailor
+    deploy:
+      replicas: 1
+
+# Define the volumes we referenced above
+volumes:
+  mongo-data:
+  rabbitmq-data:

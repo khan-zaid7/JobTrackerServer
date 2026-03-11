@@ -36,12 +36,12 @@ const connectDB = async () => {
     if (mongoose.connection.readyState >= 1) return;
     try {
         // This check is still useful to confirm the file was read correctly
-        if (!process.env.MONGO_URI) {
+        if (!process.env.MONGO_URL) {
             console.error(`Debug: Script is looking for .env at this exact path: ${envPath}`);
             throw new Error('MONGO_URI not found. Please ensure the .env file exists at the path above and contains the MONGO_URI variable.');
         }
         console.log('Connecting to database...');
-        await mongoose.connect(process.env.MONGO_URI);
+        await mongoose.connect(process.env.MONGO_URL);
         console.log('✅ Database connected successfully.');
     } catch (err) {
         console.error(`❌ DB connection failed:`, err.message);
